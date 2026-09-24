@@ -68,7 +68,7 @@ export interface Order {
   paymentSenderPhone?: string;
   paymentTrxId?: string;
   customerId?: string;
-  customerAuthType?: 'google' | 'phone';
+  customerAuthType?: 'google' | 'phone' | 'email';
   deletedByAdmin?: boolean;
   cancelledReason?: string;
 }
@@ -89,6 +89,7 @@ export interface StoreSettings {
   rocketNumber?: string;
   paymentInstructions?: string;
   contactPhone?: string;
+  contactEmail?: string;
   whatsappNumber?: string;
   facebookUrl?: string;
   promoNotice?: string;

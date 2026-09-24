@@ -12,25 +12,18 @@ export const AdManager: React.FC<AdManagerProps> = ({ config, isAdminOpen = fals
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   const hasTriggeredPopunder = useRef(false);
 
-  // If ads are globally disabled or config is missing, return null
-  if (!config || !config.globalAdsEnabled) {
-    return null;
-  }
+  const isAdsEnabled = Boolean(config?.globalAdsEnabled);
+  const activeAds = isAdsEnabled ? (config?.ads || []).filter(ad => ad.enabled) : [];
+  const cooldownMinutes = config?.popunderCooldownMinutes || 1;
 
-  const activeAds = (config.ads || []).filter(ad => ad.enabled);
-  if (activeAds.length === 0) {
-    return null;
-  }
-
-  // 1. Popunder / Direct Link handler
+  // 1. Popunder / Direct Link handler (Hook called unconditionally)
   useEffect(() => {
-    // If admin panel is open, do not trigger popunders
-    if (isAdminOpen) return;
+    // If admin panel is open, or ads are disabled, or no active ads, do not trigger popunders
+    if (isAdminOpen || !isAdsEnabled || activeAds.length === 0) return;
 
     const popunderAd = activeAds.find(ad => ad.type === 'popunder' && ad.linkUrl);
     if (!popunderAd || !popunderAd.linkUrl) return;
 
-    const cooldownMinutes = config.popunderCooldownMinutes || 1;
     const cooldownMs = cooldownMinutes * 60 * 1000;
 
     const handleGlobalClick = (e: MouseEvent) => {
@@ -61,7 +54,12 @@ export const AdManager: React.FC<AdManagerProps> = ({ config, isAdminOpen = fals
     return () => {
       window.removeEventListener('click', handleGlobalClick);
     };
-  }, [activeAds, config.popunderCooldownMinutes, isAdminOpen]);
+  }, [activeAds, cooldownMinutes, isAdminOpen, isAdsEnabled]);
+
+  // If ads are disabled or no active ads exist, return null after all hooks
+  if (!isAdsEnabled || activeAds.length === 0) {
+    return null;
+  }
 
   // 2. Banner ads (Floating Corner or Bottom Bar)
   const floatingScriptAd = activeAds.find(ad => 

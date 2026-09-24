@@ -22,7 +22,7 @@ interface NavbarProps {
     displayName?: string | null; 
     photoURL?: string | null;
     phoneNumber?: string | null;
-    authProvider?: 'google' | 'phone';
+    authProvider?: 'google' | 'phone' | 'email';
   } | null;
   isAdminUser?: boolean;
   onSignIn?: () => void;
