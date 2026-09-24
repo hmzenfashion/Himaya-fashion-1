@@ -40,7 +40,8 @@
         "status": { "type": "string", "enum": ["Pending", "Processing", "Shipped", "Delivered"] },
         "createdAt": { "type": "string", "maxLength": 50 },
         "customerId": { "type": "string", "maxLength": 128 },
-        "customerAuthType": { "type": "string", "enum": ["google", "phone"] }
+        "customerAuthType": { "type": "string", "enum": ["google", "phone", "email"] },
+        "isFirstOrder": { "type": "boolean" }
       },
       "required": ["customerName", "phone", "address", "city", "items", "totalAmount", "status"]
     },

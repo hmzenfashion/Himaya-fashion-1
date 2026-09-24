@@ -77,9 +77,10 @@ interface Order {
   paymentSenderPhone?: string;
   paymentTrxId?: string;
   customerId?: string;
-  customerAuthType?: 'google' | 'phone';
+  customerAuthType?: 'google' | 'phone' | 'email';
   deletedByAdmin?: boolean;
   cancelledReason?: string;
+  isFirstOrder?: boolean;
 }
 
 interface StoreSettings {
@@ -600,7 +601,8 @@ app.post("/api/orders", (req, res) => {
     paymentSenderPhone: req.body.paymentSenderPhone || '',
     paymentTrxId: req.body.paymentTrxId || '',
     customerId: req.body.customerId || '',
-    customerAuthType: req.body.customerAuthType || undefined
+    customerAuthType: req.body.customerAuthType || undefined,
+    isFirstOrder: req.body.isFirstOrder !== undefined ? Boolean(req.body.isFirstOrder) : false
   };
   data.orders.unshift(newOrder);
   saveStoreData(data);

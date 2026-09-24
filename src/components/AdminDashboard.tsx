@@ -198,6 +198,12 @@ const OrderCard: React.FC<OrderCardProps> = ({ order, onUpdateStatus, onMarkDeli
           </select>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {order.isFirstOrder && (
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-xs flex items-center gap-1">
+              <span>🌟</span>
+              <span>১ম অর্ডার (First Order)</span>
+            </span>
+          )}
           {order.deliveryArea && (
             <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
               order.deliveryArea === 'Outside Dhaka'

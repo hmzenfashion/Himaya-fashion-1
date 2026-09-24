@@ -36,8 +36,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (!email.trim() || !email.includes('@')) {
-      setErrorMessage('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস লিখুন');
+    const cleanInput = email.trim();
+    const isEmail = cleanInput.includes('@');
+    const cleanDigits = cleanInput.replace(/[\s\-\+]/g, '');
+    const isBdPhone = /^01[3-9]\d{8}$/.test(cleanDigits) || /^8801[3-9]\d{8}$/.test(cleanDigits);
+
+    if (!isEmail && !isBdPhone) {
+      setErrorMessage('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস অথবা ১১ ডিজিটের মোবাইল নম্বর লিখুন');
       return;
     }
     if (!password || password.length < 4) {
@@ -47,12 +52,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLoading(true);
     try {
-      const customer = await loginCustomerWithEmail(email, password);
+      const customer = await loginCustomerWithEmail(cleanInput, password);
       onSuccess(customer);
       onClose();
     } catch (err: any) {
       console.error("Login failed:", err);
-      setErrorMessage(err.message || 'লগইন ব্যর্থ হয়েছে। পাসওয়ার্ড বা জিমেইল চেক করুন।');
+      setErrorMessage(err.message || 'লগইন ব্যর্থ হয়েছে। পাসওয়ার্ড বা আইডি চেক করুন।');
     } finally {
       setIsLoading(false);
     }
@@ -67,8 +72,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setErrorMessage('অনুগ্রহ করে আপনার নাম লিখুন');
       return;
     }
-    if (!email.trim() || !email.includes('@')) {
-      setErrorMessage('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস লিখুন');
+    const cleanInput = email.trim();
+    const isEmail = cleanInput.includes('@');
+    const cleanDigits = cleanInput.replace(/[\s\-\+]/g, '');
+    const isBdPhone = /^01[3-9]\d{8}$/.test(cleanDigits) || /^8801[3-9]\d{8}$/.test(cleanDigits);
+
+    if (!isEmail && !isBdPhone) {
+      setErrorMessage('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস অথবা ১১ ডিজিটের মোবাইল নম্বর লিখুন');
       return;
     }
     if (!password || password.length < 4) {
@@ -78,13 +88,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLoading(true);
     try {
-      const customer = await registerCustomerWithEmail(name, email, password);
-      setSuccessMessage('সফলভাবে রেজিস্টার সম্পন্ন হয়েছে! এখন লগইন ট্যাবে গিয়ে লগইন করুন।');
+      const customer = await registerCustomerWithEmail(name, cleanInput, password);
+      setSuccessMessage('সফলভাবে রেজিস্টার সম্পন্ন হয়েছে!');
       setTimeout(() => {
-        setActiveTab('login');
-        setPassword('');
-        setSuccessMessage('');
-      }, 1500);
+        onSuccess(customer);
+        onClose();
+      }, 900);
     } catch (err: any) {
       console.error("Registration failed:", err);
       setErrorMessage(err.message || 'রেজিস্ট্রেশন ব্যর্থ হয়েছে। আবার চেষ্টা করুন।');
@@ -169,12 +178,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <form onSubmit={handleLogin} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Gmail Address (আপনার জিমেইল) <span className="text-red-500">*</span>
+                  Gmail বা মোবাইল নম্বর <span className="text-red-500">*</span>
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   required
-                  placeholder="yourname@gmail.com"
+                  placeholder="yourname@gmail.com অথবা 017XXXXXXXX"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
@@ -194,7 +203,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
                 />
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  আপনার রেজিস্টার্ড জিমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন। (Admin: mhemal136@gmail.com)
+                  আপনার রেজিস্টার্ড জিমেইল বা মোবাইল এবং পাসওয়ার্ড দিয়ে লগইন করুন। (Admin: mhemal136@gmail.com)
                 </span>
               </div>
 
@@ -219,7 +228,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Tanvir Ahmed"
+                  placeholder="যেমন: Tanvir Ahmed"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
@@ -228,12 +237,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Gmail Address (আপনার জিমেইল) <span className="text-red-500">*</span>
+                  Gmail বা মোবাইল নম্বর <span className="text-red-500">*</span>
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   required
-                  placeholder="yourname@gmail.com"
+                  placeholder="yourname@gmail.com অথবা 017XXXXXXXX"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"

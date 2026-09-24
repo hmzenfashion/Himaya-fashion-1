@@ -564,27 +564,29 @@ export async function saveCustomerToFirestore(customer: CustomerUser): Promise<v
   }
 }
 
-export async function registerCustomerWithEmail(name: string, email: string, pass: string): Promise<CustomerUser> {
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanName = name.trim() || cleanEmail.split('@')[0];
+export async function registerCustomerWithEmail(name: string, emailOrPhone: string, pass: string): Promise<CustomerUser> {
+  const cleanId = emailOrPhone.trim().toLowerCase();
+  const isEmail = cleanId.includes('@');
+  const cleanName = name.trim() || (isEmail ? cleanId.split('@')[0] : cleanId);
   const cleanPass = pass.trim();
-  const customerId = `cust_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+  const customerId = `cust_${cleanId.replace(/[^a-z0-9]/g, '_')}`;
 
   const customer: CustomerUser = {
     id: customerId,
     displayName: cleanName,
-    email: cleanEmail,
-    phoneNumber: null,
-    authProvider: 'email'
+    email: isEmail ? cleanId : null,
+    phoneNumber: !isEmail ? cleanId : null,
+    authProvider: isEmail ? 'email' : 'phone'
   };
 
   try {
     await setDoc(doc(db, 'customers', customerId), {
       id: customer.id,
       name: cleanName,
-      email: cleanEmail,
+      email: isEmail ? cleanId : '',
+      phone: !isEmail ? cleanId : '',
       password: cleanPass,
-      authProvider: 'email',
+      authProvider: isEmail ? 'email' : 'phone',
       createdAt: new Date().toISOString()
     }, { merge: true });
   } catch (err) {
@@ -595,12 +597,13 @@ export async function registerCustomerWithEmail(name: string, email: string, pas
   return customer;
 }
 
-export async function loginCustomerWithEmail(email: string, pass: string): Promise<CustomerUser> {
-  const cleanEmail = email.trim().toLowerCase();
+export async function loginCustomerWithEmail(emailOrPhone: string, pass: string): Promise<CustomerUser> {
+  const cleanId = emailOrPhone.trim().toLowerCase();
+  const isEmail = cleanId.includes('@');
   const cleanPass = pass.trim();
-  const customerId = `cust_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+  const customerId = `cust_${cleanId.replace(/[^a-z0-9]/g, '_')}`;
 
-  let customerName = cleanEmail.split('@')[0];
+  let customerName = isEmail ? cleanId.split('@')[0] : cleanId;
 
   try {
     const docRef = doc(db, 'customers', customerId);
@@ -616,9 +619,10 @@ export async function loginCustomerWithEmail(email: string, pass: string): Promi
       await setDoc(docRef, {
         id: customerId,
         name: customerName,
-        email: cleanEmail,
+        email: isEmail ? cleanId : '',
+        phone: !isEmail ? cleanId : '',
         password: cleanPass,
-        authProvider: 'email',
+        authProvider: isEmail ? 'email' : 'phone',
         createdAt: new Date().toISOString()
       }, { merge: true });
     }
@@ -632,9 +636,9 @@ export async function loginCustomerWithEmail(email: string, pass: string): Promi
   const customer: CustomerUser = {
     id: customerId,
     displayName: customerName,
-    email: cleanEmail,
-    phoneNumber: null,
-    authProvider: 'email'
+    email: isEmail ? cleanId : null,
+    phoneNumber: !isEmail ? cleanId : null,
+    authProvider: isEmail ? 'email' : 'phone'
   };
 
   saveStoredCustomer(customer);

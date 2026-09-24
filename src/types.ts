@@ -71,6 +71,7 @@ export interface Order {
   customerAuthType?: 'google' | 'phone' | 'email';
   deletedByAdmin?: boolean;
   cancelledReason?: string;
+  isFirstOrder?: boolean;
 }
 
 export interface CustomerUser {

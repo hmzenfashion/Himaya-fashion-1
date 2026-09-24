@@ -88,13 +88,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
 
-  // Reset form to completely empty whenever the modal is opened for a new checkout
+  // Reset form whenever the modal is opened for a new checkout, pre-filling customer info if logged in
   useEffect(() => {
     if (isOpen) {
       setFormData({
-        customerName: '',
-        email: '',
-        phone: '',
+        customerName: currentUser?.displayName || '',
+        email: currentUser?.email || '',
+        phone: currentUser?.phoneNumber || '',
         division: '',
         district: '',
         thana: '',
@@ -105,11 +105,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       });
       setCompletedOrder(null);
       setFormErrors({});
-      setShowAuthGate(false);
-      setAuthError('');
+      setShowAuthGate(!currentUser);
+      setAuthError(currentUser ? '' : 'অর্ডার করার জন্য অ্যাকাউন্টে লগইন করা বাধ্যতামূলক। অনুগ্রহ করে লগইন বা রেজিস্টার করুন।');
       setDeliveryArea('Inside Dhaka');
     }
-  }, [isOpen]);
+  }, [isOpen, currentUser]);
 
   if (!isOpen) return null;
 
@@ -226,6 +226,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   // Format rich WhatsApp message containing product pictures, sizes, quantities, prices, and customer details
   const generateWhatsAppMessage = (order: Order): string => {
+    const isFirst = order.isFirstOrder ?? true;
     const itemsList = (order.items || []).map((item, idx) => {
       let text = `🔹 *${idx + 1}. ${item.title}*\n`;
       text += `   • সাইজ (Size): ${item.size || 'Free Size'}\n`;
@@ -249,17 +250,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       timeStyle: 'short'
     });
 
-    return `🛍️ *নতুন অর্ডার কনফার্মেশন — হিমায়া ফ্যাশন*
-━━━━━━━━━━━━━━━━━━━━
+    const header = isFirst
+      ? `🌟 *নতুন গ্রাহকের প্রথম অর্ডার! (First Order on Website)*\n`
+      : `🛍️ *নতুন অর্ডার নোটিফিকেশন — হিমায়া ফ্যাশন*\n`;
+
+    return `🔔 ${header}━━━━━━━━━━━━━━━━━━━━
 📦 *অর্ডার আইডি:* #${order.id}
 📅 *অর্ডারের সময়:* ${orderTime}
-
+${isFirst ? '⭐ *ওয়েবসাইট ভিজিট করে প্রথম অর্ডার*\n' : ''}
 👤 *গ্রাহকের তথ্য:*
 • নাম: ${order.customerName}
 • ফোন নম্বর: ${order.phone}
 ${order.email ? `• ইমেইল: ${order.email}\n` : ''}📍 *ডেলিভারি ঠিকানা:*
 • বিস্তারিত ঠিকানা: ${order.address}
-• থানা/এলাকা: ${order.thana || order.city || 'N/A'}
+• থানা/উপজেলা: ${order.thana || order.city || 'N/A'}
 • জেলা: ${order.district || 'N/A'}
 • বিভাগ: ${order.division || 'N/A'}
 • ডেলিভারি এরিয়া: ${order.deliveryArea || 'Inside Dhaka'} (চার্জ: ৳${order.deliveryCharge || 80})
@@ -289,10 +293,32 @@ ${itemsList}
     return `https://wa.me/${cleanNumber}?text=${encodeURIComponent(msg)}`;
   };
 
-  // Final Order Submission logic
+  const getCustomerWhatsAppLink = (order: Order): string => {
+    let cleanNumber = (order.phone || '').replace(/[^0-9]/g, '');
+    if (cleanNumber.startsWith('0')) {
+      cleanNumber = '88' + cleanNumber;
+    } else if (!cleanNumber.startsWith('880') && cleanNumber.length === 10) {
+      cleanNumber = '880' + cleanNumber;
+    } else if (!cleanNumber) {
+      cleanNumber = '8801712345678';
+    }
+    const msg = generateWhatsAppMessage(order);
+    return `https://wa.me/${cleanNumber}?text=${encodeURIComponent(msg)}`;
+  };
+
+  // Final Order Submission logic - STRICTLY REQUIRES LOGGED-IN CUSTOMER
   const executeOrderSubmission = async (activeCustomer?: CustomerUser | null) => {
-    setIsSubmitting(true);
     const userToRecord = activeCustomer || currentUser;
+    if (!userToRecord) {
+      setAuthError('অর্ডার সম্পন্ন করার জন্য অবশ্যই অ্যাকাউন্টে লগইন থাকতে হবে! অনুগ্রহ করে লগইন করুন।');
+      setShowAuthGate(true);
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const hasOrderedBefore = typeof window !== 'undefined' && localStorage.getItem('himaya_has_ordered') === 'true';
+    const isFirstOrder = !hasOrderedBefore;
 
     const newOrderId = "ORD-" + Math.floor(100000 + Math.random() * 900000);
     const cleanCity = `${formData.thana}, ${formData.district}`.substring(0, 100);
@@ -325,7 +351,8 @@ ${itemsList}
       paymentSenderPhone: formData.senderPhone.trim(),
       paymentTrxId: formData.trxId.trim(),
       customerId: userToRecord?.id,
-      customerAuthType: userToRecord?.authProvider
+      customerAuthType: userToRecord?.authProvider,
+      isFirstOrder: isFirstOrder
     };
 
     try {
@@ -347,6 +374,12 @@ ${itemsList}
       onOrderSuccess(finalizedOrder);
       setShowAuthGate(false);
 
+      try {
+        localStorage.setItem('himaya_has_ordered', 'true');
+      } catch (e) {
+        // ignore
+      }
+
       // Automatically launch WhatsApp with full order details, product pictures, and prices
       try {
         const waLink = getAdminWhatsAppLink(finalizedOrder);
@@ -361,6 +394,12 @@ ${itemsList}
       setShowAuthGate(false);
 
       try {
+        localStorage.setItem('himaya_has_ordered', 'true');
+      } catch (e) {
+        // ignore
+      }
+
+      try {
         const waLink = getAdminWhatsAppLink(orderData);
         window.open(waLink, '_blank');
       } catch (waErr) {
@@ -371,22 +410,21 @@ ${itemsList}
     }
   };
 
-  // Form submission handler: Triggers auth gate if user is guest!
+  // Form submission handler: STRICT REQUIREMENT - Login is MANDATORY!
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!currentUser) {
+      setAuthError('অর্ডার সম্পন্ন করার জন্য অবশ্যই অ্যাকাউন্টে লগইন থাকতে হবে! অনুগ্রহ করে লগইন বা রেজিস্টার করুন।');
+      setShowAuthGate(true);
+      return;
+    }
 
     if (!validateForm()) {
       return;
     }
 
-    // REQUIREMENT: When a user clicks "Confirm Order," trigger login/sign-up step if not signed in!
-    if (!currentUser) {
-      setAuthError('');
-      setShowAuthGate(true);
-      return;
-    }
-
-    // Already signed in: proceed directly without showing sign-up prompt!
+    // User is logged in: proceed directly!
     await executeOrderSubmission(currentUser);
   };
 
@@ -395,8 +433,13 @@ ${itemsList}
     setAuthError('');
     setAuthSuccess('');
 
-    if (!authEmail.trim() || !authEmail.includes('@')) {
-      setAuthError('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস লিখুন');
+    const cleanInput = authEmail.trim();
+    const isEmail = cleanInput.includes('@');
+    const cleanDigits = cleanInput.replace(/[\s\-\+]/g, '');
+    const isBdPhone = /^01[3-9]\d{8}$/.test(cleanDigits) || /^8801[3-9]\d{8}$/.test(cleanDigits);
+
+    if (!isEmail && !isBdPhone) {
+      setAuthError('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস অথবা ১১ ডিজিটের মোবাইল নম্বর লিখুন');
       return;
     }
     if (!authPassword || authPassword.length < 4) {
@@ -406,14 +449,27 @@ ${itemsList}
 
     setIsAuthLoading(true);
     try {
-      const customer = await loginCustomerWithEmail(authEmail, authPassword);
+      const customer = await loginCustomerWithEmail(cleanInput, authPassword);
       if (onCustomerAuthSuccess) {
         onCustomerAuthSuccess(customer);
       }
-      await executeOrderSubmission(customer);
+
+      setFormData(prev => ({
+        ...prev,
+        customerName: prev.customerName || customer.displayName || '',
+        email: prev.email || customer.email || '',
+        phone: prev.phone || customer.phoneNumber || ''
+      }));
+
+      // Check if address/details are filled
+      if (formData.customerName && formData.phone && formData.division && formData.district && formData.thana && formData.address) {
+        await executeOrderSubmission(customer);
+      } else {
+        setShowAuthGate(false);
+      }
     } catch (err: any) {
       console.error("Login error at checkout:", err);
-      setAuthError(err.message || 'লগইন ব্যর্থ হয়েছে।');
+      setAuthError(err.message || 'লগইন ব্যর্থ হয়েছে। সঠিক পাসওয়ার্ড ও আইডি দিন।');
     } finally {
       setIsAuthLoading(false);
     }
@@ -428,8 +484,14 @@ ${itemsList}
       setAuthError('আপনার নাম লিখুন');
       return;
     }
-    if (!authEmail.trim() || !authEmail.includes('@')) {
-      setAuthError('সঠিক জিমেইল অ্যাড্রেস লিখুন');
+
+    const cleanInput = authEmail.trim();
+    const isEmail = cleanInput.includes('@');
+    const cleanDigits = cleanInput.replace(/[\s\-\+]/g, '');
+    const isBdPhone = /^01[3-9]\d{8}$/.test(cleanDigits) || /^8801[3-9]\d{8}$/.test(cleanDigits);
+
+    if (!isEmail && !isBdPhone) {
+      setAuthError('সঠিক জিমেইল অ্যাড্রেস অথবা ১১ ডিজিটের মোবাইল নম্বর লিখুন');
       return;
     }
     if (!authPassword || authPassword.length < 4) {
@@ -439,13 +501,26 @@ ${itemsList}
 
     setIsAuthLoading(true);
     try {
-      await registerCustomerWithEmail(authName, authEmail, authPassword);
-      setAuthSuccess('রেজিস্ট্রেশন সফল হয়েছে! এখন লগইন ট্যাবে গিয়ে লগইন করুন।');
-      setTimeout(() => {
-        setAuthMethod('login');
-        setAuthPassword('');
-        setAuthSuccess('');
-      }, 1500);
+      const customer = await registerCustomerWithEmail(authName, cleanInput, authPassword);
+      setAuthSuccess('রেজিস্ট্রেশন সফল হয়েছে!');
+      if (onCustomerAuthSuccess) {
+        onCustomerAuthSuccess(customer);
+      }
+
+      setFormData(prev => ({
+        ...prev,
+        customerName: prev.customerName || customer.displayName || '',
+        email: prev.email || customer.email || '',
+        phone: prev.phone || customer.phoneNumber || ''
+      }));
+
+      setTimeout(async () => {
+        if (formData.customerName && formData.phone && formData.division && formData.district && formData.thana && formData.address) {
+          await executeOrderSubmission(customer);
+        } else {
+          setShowAuthGate(false);
+        }
+      }, 800);
     } catch (err: any) {
       console.error("Register error at checkout:", err);
       setAuthError(err.message || 'রেজিস্ট্রেশন ব্যর্থ হয়েছে।');
@@ -491,17 +566,17 @@ ${itemsList}
           </button>
         </div>
 
-        {/* Persistent Authentication Banner */}
+        {/* Persistent Authentication Banner - Strictly enforces Login Requirement */}
         <div className="bg-[#FAF9F6] border-b border-[#E6E2DD] px-6 py-2.5 flex items-center justify-between text-xs">
           {currentUser ? (
             <div className="flex items-center gap-2 text-emerald-800 font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>
-                Signed in as:{' '}
+                লগইন রয়েছেন:{' '}
                 <strong className="text-[#1A1A1A]">
                   {currentUser.displayName || currentUser.email || currentUser.phoneNumber}
                 </strong>{' '}
-                ({currentUser.authProvider === 'google' ? 'Google Account' : 'Verified Mobile'})
+                ({currentUser.authProvider === 'google' ? 'Google Account' : currentUser.authProvider === 'phone' ? 'Verified Mobile' : 'Verified Email'})
               </span>
               <button
                 type="button"
@@ -512,20 +587,20 @@ ${itemsList}
               </button>
             </div>
           ) : (
-            <div className="flex items-center justify-between w-full">
-              <span className="text-slate-600 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#C5A059]" />
-                <span>Guest Checkout Active &middot; Sign-in prompt triggers on order confirmation</span>
+            <div className="flex items-center justify-between w-full bg-amber-50 -mx-6 -my-2.5 px-6 py-2.5 border-b border-amber-200">
+              <span className="text-amber-900 flex items-center gap-1.5 font-medium text-xs">
+                <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>অর্ডার সম্পন্ন করতে অ্যাকাউন্টে লগইন করা বাধ্যতামূলক</span>
               </span>
               <button
                 type="button"
                 onClick={() => {
                   setShowAuthGate(true);
                 }}
-                className="text-xs font-bold text-[#C5A059] hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold bg-[#1A1A1A] hover:bg-[#C5A059] text-white px-3 py-1 rounded-lg flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
               >
                 <LogIn className="w-3 h-3" />
-                <span>Sign In Now</span>
+                <span>লগইন / রেজিস্টার করুন</span>
               </button>
             </div>
           )}
@@ -540,68 +615,90 @@ ${itemsList}
                 <CheckCircle className="w-10 h-10" />
               </div>
               <h3 className="font-serif text-2xl font-bold text-[#1A1A1A]">Order Confirmed!</h3>
+
+              {completedOrder.isFirstOrder && (
+                <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-100 border border-amber-300 rounded-full text-xs font-bold text-amber-900 mx-auto shadow-xs">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>🌟 ওয়েবসাইট থেকে আপনার প্রথম অর্ডার! অভিনন্দন!</span>
+                </div>
+              )}
+
               <p className="text-xs text-[#666] max-w-md mx-auto">
-                Thank you for your order, <span className="font-bold text-[#1A1A1A]">{completedOrder.customerName}</span>. Your bespoke garments are being prepared with meticulous attention to detail.
+                ধন্যবাদ, <span className="font-bold text-[#1A1A1A]">{completedOrder.customerName}</span>। আপনার অর্ডারটি সফলভাবে গ্রহণ করা হয়েছে এবং অ্যাডমিনকে হোয়াটসঅ্যাপে নোটিফিকেশন প্রস্তুত করা হয়েছে।
               </p>
 
               {/* WhatsApp Order Dispatch Card */}
               <div className="bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl p-4 max-w-md mx-auto text-left space-y-3 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                       <MessageCircle className="w-4 h-4" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-emerald-950">অ্যাডমিন হোয়াটসঅ্যাপে তথ্য পাঠানো হয়েছে</div>
-                      <div className="text-[11px] text-emerald-700">পণ্যের ছবি, সাইজ, কালার ও দাম সহ বিস্তারিত</div>
+                      <div className="text-xs font-bold text-emerald-950">অ্যাডমিন হোয়াটসঅ্যাপে তাৎক্ষণিক নোটিফিকেশন</div>
+                      <div className="text-[11px] text-emerald-700">পণ্যের ছবি, সাইজ, কালার ও দাম সহ পূর্ণাঙ্গ তথ্য</div>
                     </div>
                   </div>
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded-full text-[10px] font-extrabold uppercase">
-                    Auto-Dispatched
+                    {completedOrder.isFirstOrder ? '1st Order' : 'Order Ready'}
                   </span>
                 </div>
 
-                <p className="text-[11px] text-emerald-800 leading-relaxed bg-white/70 p-2.5 rounded-xl border border-emerald-100">
-                  অর্ডারটি সাথে সাথে অ্যাডমিনের হোয়াটসঅ্যাপে <strong>({(storeSettings?.whatsappNumber || '01712-345678')})</strong> পাঠানো হয়েছে। নিচের বাটন চেপে আপনিও সরাসরি অ্যাডমিনের সাথে হোয়াটসঅ্যাপে চ্যাট বা অর্ডার কনফার্ম করতে পারেন।
+                <p className="text-[11px] text-emerald-800 leading-relaxed bg-white/80 p-2.5 rounded-xl border border-emerald-100">
+                  অর্ডারের বিস্তারিত তথ্য অ্যাডমিনের হোয়াটসঅ্যাপে <strong>({(storeSettings?.whatsappNumber || '01712-345678')})</strong> পাঠানো হচ্ছে। নিচে ক্লিক করে আপনিও সরাসরি অ্যাডমিনের সাথে হোয়াটসঅ্যাপ চ্যাটে অর্ডার নিশ্চিত করতে পারেন:
                 </p>
 
-                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <div className="flex flex-col gap-2 pt-1">
                   <a
                     href={getAdminWhatsAppLink(completedOrder)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer text-center"
                   >
                     <MessageCircle className="w-4 h-4" />
-                    <span>হোয়াটসঅ্যাপে মেসেজ পাঠান</span>
+                    <span>হোয়াটসঅ্যাপে নোটিফিকেশন পাঠান (Send WhatsApp)</span>
                     <ExternalLink className="w-3.5 h-3.5 opacity-80" />
                   </a>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      try {
-                        navigator.clipboard.writeText(generateWhatsAppMessage(completedOrder));
-                        setCopiedType('whatsapp');
-                        setTimeout(() => setCopiedType(null), 2500);
-                      } catch (e) {
-                        console.warn("Clipboard copy failed:", e);
-                      }
-                    }}
-                    className="py-2.5 px-3 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    {copiedType === 'whatsapp' ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="font-bold text-emerald-700">কপি হয়েছে!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>মেসেজ কপি করুন</span>
-                      </>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          navigator.clipboard.writeText(generateWhatsAppMessage(completedOrder));
+                          setCopiedType('whatsapp');
+                          setTimeout(() => setCopiedType(null), 2500);
+                        } catch (e) {
+                          console.warn("Clipboard copy failed:", e);
+                        }
+                      }}
+                      className="flex-1 py-2.5 px-3 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {copiedType === 'whatsapp' ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="font-bold text-emerald-700">কপি হয়েছে!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>মেসেজ কপি করুন</span>
+                        </>
+                      )}
+                    </button>
+
+                    {completedOrder.phone && (
+                      <a
+                        href={getCustomerWhatsAppLink(completedOrder)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 py-2.5 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>আমার হোয়াটসঅ্যাপে রসিদ</span>
+                      </a>
                     )}
-                  </button>
+                  </div>
                 </div>
               </div>
 
@@ -1125,27 +1222,45 @@ ${itemsList}
                 )}
               </div>
 
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-4 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <ShieldCheck className="w-4 h-4 text-[#C5A059]" />
-                <span>
-                  {isSubmitting 
-                    ? 'Processing Order...' 
-                    : currentUser 
-                      ? `Confirm Order & Pay ৳${total.toFixed(2)}`
-                      : `Confirm Order & Pay ৳${total.toFixed(2)} (Guest Step)`}
-                </span>
-              </button>
+              {/* Submit Button - Strictly requires logged-in user */}
+              {!currentUser ? (
+                <div className="space-y-2 pt-1">
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>অর্ডার সম্পন্ন করতে অ্যাকাউন্টে লগইন করা বাধ্যতামূলক। লগইন ছাড়া অর্ডার হবে না।</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthError('অর্ডার সম্পন্ন করার জন্য অবশ্যই অ্যাকাউন্টে লগইন থাকতে হবে! অনুগ্রহ করে লগইন বা রেজিস্টার করুন।');
+                      setShowAuthGate(true);
+                    }}
+                    className="w-full py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Lock className="w-4 h-4" />
+                    <span>লগইন করে অর্ডার সম্পন্ন করুন (Login Required) &middot; ৳{total.toFixed(2)}</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-4 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4 text-[#C5A059]" />
+                  <span>
+                    {isSubmitting 
+                      ? 'অর্ডার প্রসেস হচ্ছে...' 
+                      : `অর্ডার কনফার্ম করুন & পে করুন ৳${total.toFixed(2)}`}
+                  </span>
+                </button>
+              )}
             </form>
           )}
         </div>
       </div>
 
-      {/* Guest Authentication Modal / Gate: Triggers when guest clicks Confirm Order */}
+      {/* Mandatory Customer Authentication Modal / Gate */}
       {showAuthGate && (
         <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
           <div 
@@ -1156,11 +1271,12 @@ ${itemsList}
             <div className="flex items-center justify-between px-6 py-4 bg-[#1A1A1A] text-white">
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-[#C5A059]" />
-                <h3 className="font-serif text-base font-bold">Sign In to Confirm Order</h3>
+                <h3 className="font-serif text-base font-bold">অর্ডার করতে লগইন আবশ্যক</h3>
               </div>
               <button 
                 onClick={() => setShowAuthGate(false)}
                 className="p-1 hover:bg-white/10 rounded-full transition-colors cursor-pointer text-slate-300 hover:text-white"
+                title="Close"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1171,13 +1287,13 @@ ${itemsList}
               <div className="text-center space-y-1">
                 <div className="inline-flex items-center gap-1 text-[11px] font-bold text-[#C5A059] uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Order Almost Complete</span>
+                  <span>Login Required to Place Order</span>
                 </div>
                 <h4 className="font-serif text-lg font-bold text-slate-900">
-                  Please Sign In or Sign Up
+                  সাইন ইন বা রেজিস্টার করুন
                 </h4>
                 <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                  Your order for <strong className="text-slate-900">৳{total.toFixed(2)}</strong> is ready. Connect your account to track delivery and confirm this purchase.
+                  আপনার মোট <strong className="text-slate-900">৳{total.toFixed(2)}</strong> এর অর্ডারটি সম্পন্ন করতে অ্যাকাউন্টে লগইন করুন। অর্ডার প্লেস হওয়ামাত্রই হোয়াটসঅ্যাপে তাৎক্ষণিক নোটিফিকেশন পাঠানো হবে।
                 </p>
               </div>
 
@@ -1226,12 +1342,12 @@ ${itemsList}
                 <form onSubmit={handleCheckoutLogin} className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Gmail Address (জিমেইল) <span className="text-red-500">*</span>
+                      Gmail বা মোবাইল নম্বর <span className="text-red-500">*</span>
                     </label>
                     <input
-                      type="email"
+                      type="text"
                       required
-                      placeholder="yourname@gmail.com"
+                      placeholder="yourname@gmail.com অথবা 017XXXXXXXX"
                       value={authEmail}
                       onChange={(e) => setAuthEmail(e.target.value)}
                       className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
@@ -1251,7 +1367,7 @@ ${itemsList}
                       className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
                     />
                     <span className="text-[10px] text-slate-500 mt-1 block">
-                      আপনার রেজিস্টার্ড জিমেইল ও পাসওয়ার্ড দিয়ে অর্ডার নিশ্চিত করুন।
+                      আপনার রেজিস্টার্ড জিমেইল বা মোবাইল এবং পাসওয়ার্ড দিয়ে লগইন করুন।
                     </span>
                   </div>
 
@@ -1261,7 +1377,7 @@ ${itemsList}
                     className="w-full py-3.5 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer mt-2"
                   >
                     <ShieldCheck className="w-4 h-4 text-[#C5A059]" />
-                    <span>{isAuthLoading ? 'লগইন হচ্ছে...' : 'লগইন করে অর্ডার কনফার্ম করুন'}</span>
+                    <span>{isAuthLoading ? 'লগইন হচ্ছে...' : 'লগইন করে অর্ডার সম্পন্ন করুন'}</span>
                   </button>
                 </form>
               )}
@@ -1276,7 +1392,7 @@ ${itemsList}
                     <input
                       type="text"
                       required
-                      placeholder="e.g. Tanvir Ahmed"
+                      placeholder="যেমন: Tanvir Ahmed"
                       value={authName}
                       onChange={(e) => setAuthName(e.target.value)}
                       className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
@@ -1285,12 +1401,12 @@ ${itemsList}
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Gmail Address (জিমেইল) <span className="text-red-500">*</span>
+                      Gmail বা মোবাইল নম্বর <span className="text-red-500">*</span>
                     </label>
                     <input
-                      type="email"
+                      type="text"
                       required
-                      placeholder="yourname@gmail.com"
+                      placeholder="yourname@gmail.com অথবা 017XXXXXXXX"
                       value={authEmail}
                       onChange={(e) => setAuthEmail(e.target.value)}
                       className="w-full px-3.5 py-2.5 text-xs bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
@@ -1299,7 +1415,7 @@ ${itemsList}
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Password (পাসওয়ার্ড তৈরি করুন) <span className="text-red-500">*</span>
+                      Create Password (পাসওয়ার্ড তৈরি করুন) <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="password"
@@ -1317,13 +1433,13 @@ ${itemsList}
                     className="w-full py-3.5 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer mt-2"
                   >
                     <User className="w-4 h-4 text-[#C5A059]" />
-                    <span>{isAuthLoading ? 'রেজিস্ট্রেশন হচ্ছে...' : 'রেজিস্ট্রেশন করে অ্যাকাউন্ট তৈরি করুন'}</span>
+                    <span>{isAuthLoading ? 'রেজিস্ট্রেশন হচ্ছে...' : 'রেজিস্ট্রেশন করে অর্ডার নিশ্চিত করুন'}</span>
                   </button>
                 </form>
               )}
 
               <div className="text-[11px] text-center text-slate-400 pt-1">
-                You will remain signed in for all future orders on this device.
+                লগইন করার পর আপনার অ্যাকাউন্টে অর্ডারটি স্বয়ংক্রিয়ভাবে যুক্ত হবে।
               </div>
             </div>
           </div>

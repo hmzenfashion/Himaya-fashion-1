@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CartItem } from '../types';
-import { X, Trash2, ShoppingBag, ArrowRight } from 'lucide-react';
+import { CustomerUser } from '../firebase';
+import { X, Trash2, ShoppingBag, ArrowRight, Lock, LogIn } from 'lucide-react';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -9,6 +10,8 @@ interface CartDrawerProps {
   onUpdateQuantity: (index: number, newQty: number) => void;
   onRemoveItem: (index: number) => void;
   onProceedCheckout: () => void;
+  currentUser?: CustomerUser | null;
+  onOpenAuth?: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -18,6 +21,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onUpdateQuantity,
   onRemoveItem,
   onProceedCheckout,
+  currentUser,
+  onOpenAuth,
 }) => {
   const [deliveryArea, setDeliveryArea] = useState<'Inside Dhaka' | 'Outside Dhaka'>('Inside Dhaka');
 
@@ -177,6 +182,36 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
               </div>
 
+              {!currentUser ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between text-xs text-amber-900">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                    <div>
+                      <span className="font-bold">অর্ডার করতে লগইন আবশ্যক</span>
+                      <span className="text-[11px] text-amber-700 block">লগইন ছাড়া অর্ডার সম্পন্ন হবে না।</span>
+                    </div>
+                  </div>
+                  {onOpenAuth && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenAuth();
+                      }}
+                      className="px-2.5 py-1 bg-[#1A1A1A] hover:bg-[#C5A059] text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <LogIn className="w-3 h-3" />
+                      <span>লগইন</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2 text-xs text-emerald-800">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="truncate">লগইন রয়েছেন: <strong>{currentUser.displayName || currentUser.email || currentUser.phoneNumber}</strong></span>
+                </div>
+              )}
+
               <button
                 onClick={() => {
                   onClose();
@@ -184,7 +219,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 }}
                 className="w-full py-3.5 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
               >
-                <span>Proceed to Secure Checkout</span>
+                <span>{currentUser ? 'Proceed to Secure Checkout' : 'Proceed to Checkout (লগইন আবশ্যক)'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 

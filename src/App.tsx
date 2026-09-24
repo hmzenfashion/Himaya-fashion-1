@@ -664,6 +664,8 @@ export default function App() {
           onUpdateQuantity={handleUpdateCartQty}
           onRemoveItem={handleRemoveCartItem}
           onProceedCheckout={() => setIsCheckoutOpen(true)}
+          currentUser={activeCustomer}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
         />
       )}
 
