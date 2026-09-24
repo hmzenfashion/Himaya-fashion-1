@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidProduct(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.price is number && data.price >= 0 &&
+             data.category is string && data.category.size() <= 60 &&
+             data.image is string && data.image.size() > 0 && data.image.size() <= 500000 &&
+             data.stock is number && data.stock >= 0;
+    }
+
+    function isValidOrder(data) {
+      return data.customerName is string && data.customerName.size() > 0 && data.customerName.size() <= 100 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() <= 30 &&
+             data.address is string && data.address.size() > 0 && data.address.size() <= 300 &&
+             data.city is string && data.city.size() > 0 && data.city.size() <= 150 &&
+             data.items is list && data.items.size() > 0 && data.items.size() <= 100 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.status in ['Pending', 'Processing', 'Shipped', 'Delivered'];
+    }
+
+    function isValidBanner(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.image is string && data.image.size() <= 1000 &&
+             data.active is bool;
+    }
+
+    function isValidSetting(data) {
+      return (data.promoMessage is string && data.promoMessage.size() <= 300) ||
+             (data.emails is list && data.emails.size() <= 50);
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection test document
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Products collection: public can read, valid products can be written
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update: if isValidId(productId) && isValidProduct(incoming());
+      allow delete: if isValidId(productId);
+    }
+
+    // Orders collection: public can create orders, read and manage orders
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
+      allow update: if isValidId(orderId);
+      allow delete: if isValidId(orderId);
+    }
+
+    // Banners collection
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow create, update: if isValidId(bannerId) && isValidBanner(incoming());
+      allow delete: if isValidId(bannerId);
+    }
+
+    // Settings collection
+    match /settings/{settingId} {
+      allow read, write: if isValidId(settingId);
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow read, write: if isValidId(adminId);
+    }
+
+    // Customers collection for mobile/google shopper profiles
+    match /customers/{customerId} {
+      allow read, write: if isValidId(customerId);
+    }
+  }
+}

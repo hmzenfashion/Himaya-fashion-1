@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Himaya Fashion — Luxury Apparel & Modern Collections</title>
+    <meta name="description" content="Discover exquisite fashion, timeless elegance, and modern couture at Himaya Fashion. Shop new arrivals, curated collections, and exclusive offers." />
+    <meta property="og:title" content="Himaya Fashion — Luxury Apparel & Modern Collections" />
+    <meta property="og:description" content="Discover exquisite fashion, timeless elegance, and modern couture at Himaya Fashion." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#1A1A1A" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#FAF9F6] text-[#1A1A1A] font-sans antialiased selection:bg-[#C5A059] selection:text-white">
+    <!-- Main root container with anti-white-screen initial preloader -->
+    <div id="root">
+      <div id="himaya-initial-preloader" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #FAF9F6; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; padding: 24px; text-align: center;">
+        <div style="width: 76px; height: 76px; border-radius: 20px; background: linear-gradient(135deg, #C5A059, #E5C98B); padding: 3px; margin-bottom: 20px; box-shadow: 0 10px 25px rgba(197,160,89,0.35);">
+          <img src="/icons/logo.png" alt="Himaya Fashion" style="width: 100%; height: 100%; border-radius: 17px; object-fit: cover;" onerror="this.style.display='none'">
+        </div>
+        <div style="font-family: 'Playfair Display', serif, Georgia; font-size: 26px; font-weight: bold; color: #1A1A1A; margin-bottom: 6px; letter-spacing: 1.5px;">HIMAYA FASHION</div>
+        <div style="font-size: 13px; color: #888; margin-bottom: 24px; font-weight: 500;">Luxury Apparel & Couture Collection</div>
+        
+        <div id="himaya-spinner" style="width: 34px; height: 34px; border: 3px solid #E6E2DD; border-top-color: #C5A059; border-radius: 50%; animation: himayaspin 0.8s linear infinite; margin-bottom: 16px;"></div>
+        <style>@keyframes himayaspin { to { transform: rotate(360deg); } }</style>
+
+        <!-- Recovery trigger if browser ever delays or gets stuck on old cached service worker -->
+        <div id="himaya-recovery-box" style="display: none; max-width: 320px; margin-top: 14px; background: #ffffff; border: 1px solid #E6E2DD; border-radius: 16px; padding: 18px; box-shadow: 0 8px 30px rgba(0,0,0,0.06);">
+          <p style="font-size: 12px; color: #666; margin: 0 0 12px 0; line-height: 1.5;">সাইটটি লোড হতে দেরি হলে বা পুরোনো ক্যাশ জমে থাকলে নিচের বাটনে ট্যাপ করুন:</p>
+          <button onclick="window.himayaCleanCacheAndReload()" style="width: 100%; background: #1A1A1A; color: #ffffff; border: none; padding: 11px 16px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.2s;">
+            🔄 নতুন ভার্সনে রিফ্রেশ করুন
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Global cache-clean helper
+      window.himayaCleanCacheAndReload = function() {
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            for (var i = 0; i < regs.length; i++) {
+              regs[i].unregister();
+            }
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            for (var i = 0; i < names.length; i++) {
+              caches.delete(names[i]);
+            }
+          });
+        }
+        try {
+          sessionStorage.clear();
+        } catch(e) {}
+        window.location.reload(true);
+      };
+
+      // Show recovery box if React takes longer than 3.5s to mount
+      setTimeout(function() {
+        var box = document.getElementById('himaya-recovery-box');
+        if (box) {
+          box.style.display = 'block';
+        }
+      }, 3500);
+
+      // Auto-reload on Vite chunk load error
+      window.addEventListener('vite:preloadError', function() {
+        console.warn('[Vite] Preload error, clearing cache and reloading...');
+        window.himayaCleanCacheAndReload();
+      });
+    </script>
+
+    <script type="module" src="/src/main.tsx"></script>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').then(function(reg) {
+            // Check for updates on load
+            reg.update();
+          }).catch(function(err) {
+            console.log('SW registration note:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

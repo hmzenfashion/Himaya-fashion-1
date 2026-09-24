@@ -1,0 +1,7 @@
+{
+  "name": "Himaya Fashion",
+  "description": "Premium luxury fashion e-commerce storefront featuring guest browsing, tailored checkout with Bangladesh Division/District/Thana location selection, mandatory manual buyer entry, and persistent Gmail & Mobile Phone customer authentication.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,0 +1,131 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "E-commerce boutique product item",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 150 },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "category": { "type": "string", "maxLength": 60 },
+        "image": { "type": "string", "maxLength": 1000 },
+        "images": { "type": "array" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "badge": { "type": "string", "maxLength": 40 },
+        "sizes": { "type": "array" },
+        "colors": { "type": "array" },
+        "stock": { "type": "number" },
+        "featured": { "type": "boolean" }
+      },
+      "required": ["title", "price", "category", "image", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order",
+      "type": "object",
+      "properties": {
+        "customerName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "division": { "type": "string", "maxLength": 50 },
+        "district": { "type": "string", "maxLength": 50 },
+        "thana": { "type": "string", "maxLength": 60 },
+        "address": { "type": "string", "maxLength": 300 },
+        "city": { "type": "string", "maxLength": 100 },
+        "deliveryArea": { "type": "string", "enum": ["Inside Dhaka", "Outside Dhaka"] },
+        "deliveryCharge": { "type": "number" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Processing", "Shipped", "Delivered"] },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerAuthType": { "type": "string", "enum": ["google", "phone"] }
+      },
+      "required": ["customerName", "phone", "address", "city", "items", "totalAmount", "status"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Store hero promotional banner",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 150 },
+        "subtitle": { "type": "string", "maxLength": 300 },
+        "image": { "type": "string", "maxLength": 1000 },
+        "linkText": { "type": "string", "maxLength": 60 },
+        "active": { "type": "boolean" },
+        "tag": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["title", "image", "active"]
+    },
+    "StoreSetting": {
+      "title": "StoreSetting",
+      "description": "Storewide settings, payments, contact info, and announcement bar",
+      "type": "object",
+      "properties": {
+        "bkashNumber": { "type": "string", "maxLength": 50 },
+        "bkashType": { "type": "string", "maxLength": 30 },
+        "nagadNumber": { "type": "string", "maxLength": 50 },
+        "nagadType": { "type": "string", "maxLength": 30 },
+        "rocketNumber": { "type": "string", "maxLength": 50 },
+        "paymentInstructions": { "type": "string", "maxLength": 1000 },
+        "contactPhone": { "type": "string", "maxLength": 50 },
+        "contactEmail": { "type": "string", "maxLength": 100 },
+        "whatsappNumber": { "type": "string", "maxLength": 50 },
+        "facebookUrl": { "type": "string", "maxLength": 200 },
+        "deliveryChargeInsideDhaka": { "type": "number" },
+        "deliveryChargeOutsideDhaka": { "type": "number" },
+        "promoMessage": { "type": "string", "maxLength": 300 },
+        "promoActive": { "type": "boolean" },
+        "announcementText": { "type": "string", "maxLength": 300 },
+        "isAnnouncementActive": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      }
+    },
+    "AdminPermission": {
+      "title": "AdminPermission",
+      "description": "Allowed admin Google accounts",
+      "type": "object",
+      "properties": {
+        "emails": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["emails"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Registered or authenticated shopper",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string", "maxLength": 30 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "authProvider": { "type": "string", "enum": ["google", "phone"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["authProvider", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of all boutique products and inventory"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders placed through checkout"
+    },
+    "/banners/{bannerId}": {
+      "schema": "Banner",
+      "description": "Hero banner advertisements displayed on the storefront"
+    },
+    "/settings/{settingId}": {
+      "schema": "StoreSetting",
+      "description": "Store configuration and announcement messages"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminPermission",
+      "description": "Admin access authorization"
+    }
+  }
+}

@@ -1,0 +1,194 @@
+{
+  "version": "v1.4.2",
+  "settings": {
+    "bkashNumber": "01607412873",
+    "bkashType": "Personal",
+    "nagadNumber": "01607412873",
+    "nagadType": "Personal",
+    "rocketNumber": "",
+    "paymentInstructions": "বিকাশ বা নগদ অ্যাপ থেকে 'Send Money' অথবা 'Payment' করে আপনার নম্বর ও TrxID লিখুন।",
+    "contactPhone": "+8801832350726",
+    "promoNotice": "✨ Spring Luxury 2026 Collection — Enjoy Express Delivery across Bangladesh",
+    "isPromoActive": true,
+    "deliveryChargeInsideDhaka": 100,
+    "deliveryChargeOutsideDhaka": 150,
+    "appApkUrl": "/uploads/test_json_1790148086722.apk",
+    "appApkSize": "0.0 MB",
+    "isAppDownloadEnabled": true,
+    "contactEmail": "himayafashion136@gmail.com",
+    "whatsappNumber": "+8801832350726",
+    "facebookUrl": "https://facebook.com/himayafashion",
+    "announcementText": "✨ Summer Bespoke Collection · Complimentary Shipping on Orders over ৳5000",
+    "isAnnouncementActive": true,
+    "appApkVersion": "v1.2.0",
+    "appDownloadNotes": "Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.",
+    "appButtonText": "Download apps",
+    "updatedAt": "2026-09-22T12:01:26.372Z",
+    "customCategories": [
+      "Outerwear",
+      "Knitwear",
+      "Skirts",
+      "Accessories",
+      "Georgette 3 piece",
+      "readymade 3 pic",
+      "ইন্ডিয়ান শাড়ী"
+    ],
+    "deletedCategories": [
+      "Traditional",
+      "Dresses"
+    ]
+  },
+  "banners": [
+    {
+      "id": "b1",
+      "title": "Autumn-Winter Couture '26",
+      "subtitle": "Experience unmatched warmth and sophisticated tailoring crafted for the modern icon.",
+      "image": "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&q=80&w=1200",
+      "linkText": "Explore Collection",
+      "active": true,
+      "tag": "Limited Release"
+    },
+    {
+      "id": "b2",
+      "title": "The Silk & Cashmere Edit",
+      "subtitle": "Handpicked Italian and Mongolian fibers designed to drape flawlessly on every occasion.",
+      "image": "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&q=80&w=1200",
+      "linkText": "Shop Luxury",
+      "active": true,
+      "tag": "Signature Series"
+    }
+  ],
+  "products": [
+    {
+      "id": "prod-1",
+      "title": "Elysian Cashmere Oversized Coat",
+      "price": 349,
+      "originalPrice": 420,
+      "category": "Outerwear",
+      "image": "https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&q=80&w=800",
+      "description": "Crafted from ethically sourced Mongolian cashmere. Features a structured lapel, deep welt pockets, and a relaxed silhouette that exudes effortless luxury.",
+      "badge": "Best Seller",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L"
+      ],
+      "colors": [
+        "Camel",
+        "Charcoal",
+        "Cream"
+      ],
+      "stock": 15,
+      "featured": true
+    },
+    {
+      "id": "prod-2",
+      "title": "Serenade Silk Midi Dress",
+      "price": 210,
+      "category": "Dresses",
+      "image": "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&q=80&w=800",
+      "description": "A breathtaking slip dress tailored from pure mulberry silk. Delicate bias-cut draping hugs your silhouette with fluid grace.",
+      "badge": "New Arrival",
+      "sizes": [
+        "S",
+        "M",
+        "L"
+      ],
+      "colors": [
+        "Emerald",
+        "Champagne",
+        "Midnight Black"
+      ],
+      "stock": 8,
+      "featured": true
+    },
+    {
+      "id": "prod-3",
+      "title": "Milano Tailored Wool Blazer",
+      "price": 285,
+      "originalPrice": 330,
+      "category": "Outerwear",
+      "image": "https://images.unsplash.com/photo-1550639525-c97d455acf70?auto=format&fit=crop&q=80&w=800",
+      "description": "Sharp architectural tailoring meets relaxed everyday elegance. Horn buttons and dual back vents for immaculate poise.",
+      "badge": "Sale",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "colors": [
+        "Navy",
+        "Pinstripe Grey",
+        "Burgundy"
+      ],
+      "stock": 12,
+      "featured": true
+    },
+    {
+      "id": "prod-4",
+      "title": "Aurum Pleated Satin Skirt",
+      "price": 145,
+      "category": "Skirts",
+      "image": "https://images.unsplash.com/photo-1583496661160-fb5886a0aaaa?auto=format&fit=crop&q=80&w=800",
+      "description": "Dynamic micro-pleats with a lustrous sheen that catches evening light with every step.",
+      "badge": "",
+      "sizes": [
+        "S",
+        "M",
+        "L"
+      ],
+      "colors": [
+        "Bronze",
+        "Silver",
+        "Rose Gold"
+      ],
+      "stock": 20,
+      "featured": false
+    },
+    {
+      "id": "prod-5",
+      "title": "Vanguard Ribbed Turtleneck Sweater",
+      "price": 120,
+      "category": "Knitwear",
+      "image": "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?auto=format&fit=crop&q=80&w=800",
+      "description": "Ultra-soft merino wool blend offering breathable warmth and a refined high neck silhouette.",
+      "badge": "Popular",
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L"
+      ],
+      "colors": [
+        "Oatmeal",
+        "Black",
+        "Forest Green"
+      ],
+      "stock": 25,
+      "featured": true
+    },
+    {
+      "id": "prod-6",
+      "title": "Sovereign Leather Tote Bag",
+      "price": 395,
+      "category": "Accessories",
+      "image": "https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&q=80&w=800",
+      "description": "Full-grain Italian calfskin with brushed gold hardware. Roomy interior compartment designed for daily essentials.",
+      "badge": "Handcrafted",
+      "sizes": [
+        "One Size"
+      ],
+      "colors": [
+        "Cognac",
+        "Black",
+        "Taupe"
+      ],
+      "stock": 6,
+      "featured": true
+    }
+  ],
+  "orders": []
+}
