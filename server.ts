@@ -107,8 +107,35 @@ interface StoreData {
   banners: BannerAd[];
   orders: Order[];
   settings?: StoreSettings;
+  adConfig?: any;
   version: string;
 }
+
+const defaultAdConfig = {
+  globalAdsEnabled: true,
+  popunderCooldownMinutes: 1,
+  ads: [
+    {
+      id: "adsterra-popunder",
+      name: "Adsterra Popunder / Direct Smartlink",
+      type: "popunder",
+      enabled: true,
+      linkUrl: "https://www.profitableratecpmnetwork.com/peqj1c1g?key=22bd9ad3eec7103becba033d685cb45f",
+      placement: "popunder",
+      createdAt: "2026-03-01T00:00:00.000Z"
+    },
+    {
+      id: "adsterra-banner-160x300",
+      name: "Adsterra 160x300 Iframe Banner",
+      type: "script_banner",
+      enabled: true,
+      scriptCode: `<script type="text/javascript">\n  atOptions = {\n    'key' : 'c4ae09df70d272d84914d3233703d9dd',\n    'format' : 'iframe',\n    'height' : 300,\n    'width' : 160,\n    'params' : {}\n  };\n</script>\n<script type="text/javascript" src="https://www.highrevenueformat.com/c4ae09df70d272d84914d3233703d9dd/invoke.js"></script>`,
+      placement: "floating_corner",
+      createdAt: "2026-03-01T00:00:00.000Z"
+    }
+  ],
+  updatedAt: "2026-03-01T00:00:00.000Z"
+};
 
 const defaultSettings: StoreSettings = {
   bkashNumber: "01712-345678",
@@ -511,6 +538,23 @@ app.put("/api/settings", (req, res) => {
   };
   saveStoreData(data);
   res.json({ success: true, settings: data.settings });
+});
+
+// Advertising & Monetization API (Popunder, Banner scripts, Direct links)
+app.get("/api/ads", (req, res) => {
+  const data = getStoreData();
+  res.json(data.adConfig || defaultAdConfig);
+});
+
+app.put("/api/ads", (req, res) => {
+  const data = getStoreData();
+  data.adConfig = {
+    ...(data.adConfig || defaultAdConfig),
+    ...req.body,
+    updatedAt: new Date().toISOString()
+  };
+  saveStoreData(data);
+  res.json({ success: true, adConfig: data.adConfig });
 });
 
 // Admin Login

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Order, BannerAd, StoreSettings } from '../types';
+import { Product, Order, BannerAd, StoreSettings, AdConfiguration, WebsiteAdItem, AdType, AdPlacement } from '../types';
 import { 
   LayoutDashboard, 
   Package, 
@@ -61,8 +61,10 @@ import {
   updateBannerInFirestore,
   deleteBannerFromFirestore,
   saveStoreSettings,
+  saveAdConfig,
   DEFAULT_ADMIN_EMAILS
 } from '../firebase';
+import { initialAdConfig } from '../data/initialData';
 
 // Curated high quality fashion photos for 1-click selection from Admin Panel
 const CURATED_GALLERY = [
@@ -499,6 +501,8 @@ interface AdminDashboardProps {
   onUpdateBanners?: (banners: BannerAd[]) => void;
   onDeleteProduct?: (productId: string) => void;
   onDeleteOrder?: (orderId: string) => void;
+  adConfig?: AdConfiguration;
+  onUpdateAdConfig?: (config: AdConfiguration) => void;
 }
 
 type AdminTab = 
@@ -582,6 +586,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onUpdateBanners,
   onDeleteProduct,
   onDeleteOrder,
+  adConfig,
+  onUpdateAdConfig,
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -591,6 +597,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [localProducts, setLocalProducts] = useState<Product[]>(products);
   const [localBanners, setLocalBanners] = useState<BannerAd[]>(banners);
   const [localOrders, setLocalOrders] = useState<Order[]>(orders);
+  const [localAdConfig, setLocalAdConfig] = useState<AdConfiguration>(adConfig || initialAdConfig);
+  const [isAddingAd, setIsAddingAd] = useState(false);
+  const [editingAd, setEditingAd] = useState<WebsiteAdItem | null>(null);
+  const [isSavingAdConfig, setIsSavingAdConfig] = useState(false);
+  const [adFilter, setAdFilter] = useState<'all' | 'popunder' | 'script_banner' | 'direct_link'>('all');
+  const [adForm, setAdForm] = useState<{
+    name: string;
+    type: AdType;
+    enabled: boolean;
+    linkUrl: string;
+    scriptCode: string;
+    placement: AdPlacement;
+  }>({
+    name: '',
+    type: 'popunder',
+    enabled: true,
+    linkUrl: '',
+    scriptCode: '',
+    placement: 'popunder'
+  });
+  const [popunderCooldownInput, setPopunderCooldownInput] = useState<number>(adConfig?.popunderCooldownMinutes || 1);
+
+  useEffect(() => {
+    if (adConfig) {
+      setLocalAdConfig(adConfig);
+      setPopunderCooldownInput(adConfig.popunderCooldownMinutes || 1);
+    }
+  }, [adConfig]);
 
   // Banner form state
   const [editingBanner, setEditingBanner] = useState<BannerAd | null>(null);
@@ -1902,6 +1936,165 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.target.value = '';
   };
 
+  // Ad Management Handlers
+  const handleSaveAdConfigToStorage = async (newConfig: AdConfiguration) => {
+    setLocalAdConfig(newConfig);
+    if (onUpdateAdConfig) {
+      onUpdateAdConfig(newConfig);
+    }
+    setIsSavingAdConfig(true);
+    try {
+      await saveAdConfig(newConfig);
+      fetch('/api/ads', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newConfig)
+      }).catch(() => {});
+      setToastMessage('✅ বিজ্ঞাপন সেটিংস সফলভাবে সেভ হয়েছে!');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err) {
+      console.error('Failed to save ad configuration:', err);
+      setToastMessage('বিজ্ঞাপন সেটিংস সেভ করতে সমস্যা হয়েছে।');
+    } finally {
+      setIsSavingAdConfig(false);
+    }
+  };
+
+  const handleToggleGlobalAds = () => {
+    const updated = {
+      ...localAdConfig,
+      globalAdsEnabled: !localAdConfig.globalAdsEnabled,
+      updatedAt: new Date().toISOString()
+    };
+    handleSaveAdConfigToStorage(updated);
+  };
+
+  const handleToggleAd = (adId: string) => {
+    const updatedAds = localAdConfig.ads.map(ad => 
+      ad.id === adId ? { ...ad, enabled: !ad.enabled } : ad
+    );
+    const updated = {
+      ...localAdConfig,
+      ads: updatedAds,
+      updatedAt: new Date().toISOString()
+    };
+    handleSaveAdConfigToStorage(updated);
+  };
+
+  const handleDeleteAd = (adId: string) => {
+    if (window.confirm('আপনি কি এই বিজ্ঞাপনটি মুছে ফেলতে চান?')) {
+      const updatedAds = localAdConfig.ads.filter(ad => ad.id !== adId);
+      const updated = {
+        ...localAdConfig,
+        ads: updatedAds,
+        updatedAt: new Date().toISOString()
+      };
+      handleSaveAdConfigToStorage(updated);
+    }
+  };
+
+  const handleOpenAddAd = () => {
+    setEditingAd(null);
+    setAdForm({
+      name: '',
+      type: 'popunder',
+      enabled: true,
+      linkUrl: '',
+      scriptCode: '',
+      placement: 'popunder'
+    });
+    setIsAddingAd(true);
+  };
+
+  const handleOpenEditAd = (ad: WebsiteAdItem) => {
+    setEditingAd(ad);
+    setAdForm({
+      name: ad.name,
+      type: ad.type,
+      enabled: ad.enabled,
+      linkUrl: ad.linkUrl || '',
+      scriptCode: ad.scriptCode || '',
+      placement: ad.placement || (ad.type === 'popunder' ? 'popunder' : 'floating_corner')
+    });
+    setIsAddingAd(true);
+  };
+
+  const handleSaveAdForm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adForm.name.trim()) {
+      alert('বিজ্ঞাপনের নাম বা টাইটেল দিন');
+      return;
+    }
+
+    if (adForm.type === 'popunder' || adForm.type === 'direct_link') {
+      if (!adForm.linkUrl.trim()) {
+        alert('বিজ্ঞাপন লিংক (URL) দিন');
+        return;
+      }
+    }
+
+    if (adForm.type === 'script_banner' || adForm.type === 'custom_html') {
+      if (!adForm.scriptCode.trim()) {
+        alert('স্ক্রিপ্ট বা ব্যানার কোড দিন');
+        return;
+      }
+    }
+
+    let updatedAds: WebsiteAdItem[];
+    if (editingAd) {
+      updatedAds = localAdConfig.ads.map(ad => {
+        if (ad.id === editingAd.id) {
+          return {
+            ...ad,
+            name: adForm.name.trim(),
+            type: adForm.type,
+            enabled: adForm.enabled,
+            linkUrl: adForm.linkUrl.trim() || undefined,
+            scriptCode: adForm.scriptCode.trim() || undefined,
+            placement: adForm.placement
+          };
+        }
+        return ad;
+      });
+    } else {
+      const newAdItem: WebsiteAdItem = {
+        id: 'ad-' + Date.now(),
+        name: adForm.name.trim(),
+        type: adForm.type,
+        enabled: adForm.enabled,
+        linkUrl: adForm.linkUrl.trim() || undefined,
+        scriptCode: adForm.scriptCode.trim() || undefined,
+        placement: adForm.placement,
+        createdAt: new Date().toISOString()
+      };
+      updatedAds = [newAdItem, ...localAdConfig.ads];
+    }
+
+    const updated = {
+      ...localAdConfig,
+      ads: updatedAds,
+      updatedAt: new Date().toISOString()
+    };
+    handleSaveAdConfigToStorage(updated);
+    setIsAddingAd(false);
+    setEditingAd(null);
+  };
+
+  const handleSaveCooldown = (minutes: number) => {
+    const updated = {
+      ...localAdConfig,
+      popunderCooldownMinutes: Math.max(0, minutes),
+      updatedAt: new Date().toISOString()
+    };
+    handleSaveAdConfigToStorage(updated);
+  };
+
+  const handleResetToAdsterraDefaults = () => {
+    if (window.confirm('আপনি কি Adsterra ডিফল্ট পপআন্ডার ও 160x300 ব্যানার রিস্টোর করতে চান?')) {
+      handleSaveAdConfigToStorage(initialAdConfig);
+    }
+  };
+
   // Nav items matching user's requirements
   const navItems: { id: AdminTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number; alert?: boolean }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -1912,7 +2105,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     { id: 'payment_settings', label: 'bKash/Nagad (পেমেন্ট)', icon: CreditCard },
     { id: 'stock_alerts', label: 'Stock Alerts', icon: AlertTriangle, badge: lowStockProducts.length, alert: lowStockProducts.length > 0 },
     { id: 'coupons', label: 'Coupons', icon: Ticket, badge: coupons.length },
-    { id: 'ads_promos', label: 'Ads & Promos', icon: Megaphone },
+    { id: 'ads_promos', label: 'Ads & Links (বিজ্ঞাপন)', icon: Megaphone, badge: (localAdConfig.ads || []).filter(a => a.enabled).length },
     { id: 'reviews', label: 'Reviews', icon: MessageSquare, badge: reviews.length },
     { id: 'settings', label: 'Website Settings', icon: Settings },
     { id: 'app_install', label: 'Download Apps (ফাইল কন্ট্রোল)', icon: Smartphone },
@@ -4027,48 +4220,506 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 )}
 
-                {/* 7. ADS & PROMOS VIEW */}
+                {/* 7. ADS & MONETIZATION MANAGEMENT VIEW */}
                 {activeTab === 'ads_promos' && (
-                  <div className="space-y-6 max-w-3xl">
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-lg">Storefront Announcements & Promotional Banners</h4>
-                      <p className="text-xs text-slate-500">Configure the top notification banner and boutique promotions.</p>
+                  <div className="space-y-6 max-w-5xl">
+                    {/* Header with Master Switch */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 rounded-2xl border border-slate-700 shadow-xl text-white">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                            <Megaphone className="w-5 h-5" />
+                          </span>
+                          <div>
+                            <h4 className="font-bold text-base sm:text-lg">বিজ্ঞাপন ও লিংক কন্ট্রোল (Ads & Monetization)</h4>
+                            <p className="text-xs text-slate-300">
+                              Adsterra পপআন্ডার, ডিরেক্ট স্মার্টলিংক ও ব্যানার কোড চালু/বন্ধ করুন অথবা নতুন লিংক বসান।
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Global Master Toggle */}
+                      <div className="flex items-center gap-3 bg-slate-950/70 px-4 py-2.5 rounded-xl border border-slate-700/80">
+                        <div className="text-right">
+                          <div className="text-xs font-bold text-white flex items-center gap-1.5 justify-end">
+                            <span className={`w-2 h-2 rounded-full ${localAdConfig.globalAdsEnabled ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
+                            {localAdConfig.globalAdsEnabled ? 'সব বিজ্ঞাপন চালু' : 'সব বিজ্ঞাপন বন্ধ'}
+                          </div>
+                          <div className="text-[10px] text-slate-400">Master Ad Switch</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleToggleGlobalAds}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            localAdConfig.globalAdsEnabled ? 'bg-emerald-500' : 'bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              localAdConfig.globalAdsEnabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
                     </div>
 
+                    {/* Stat Cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs font-semibold text-slate-500">মোট বিজ্ঞাপন (Total)</div>
+                        <div className="text-2xl font-black text-slate-900 mt-1">{localAdConfig.ads.length}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">লিস্টে সেভ করা আছে</div>
+                      </div>
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs font-semibold text-emerald-600">চালু আছে (Active)</div>
+                        <div className="text-2xl font-black text-emerald-600 mt-1">
+                          {localAdConfig.ads.filter(a => a.enabled).length}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">ওয়েবসাইটে শো করছে</div>
+                      </div>
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs font-semibold text-purple-600">পপআন্ডার (Popunder)</div>
+                        <div className="text-sm font-bold text-slate-800 mt-2 flex items-center gap-1.5">
+                          {localAdConfig.ads.some(a => a.type === 'popunder' && a.enabled) ? (
+                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-[11px] font-bold">সক্রিয় (Active)</span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[11px] font-bold">বন্ধ (Off)</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1 truncate">ক্লিকে নতুন ট্যাব ওপেন</div>
+                      </div>
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs font-semibold text-amber-600">ব্যানার কোড (Banner)</div>
+                        <div className="text-sm font-bold text-slate-800 mt-2 flex items-center gap-1.5">
+                          {localAdConfig.ads.some(a => a.type === 'script_banner' && a.enabled) ? (
+                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[11px] font-bold">160x300 চালু</span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[11px] font-bold">বন্ধ (Off)</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1 truncate">সাইটের ভাসমান ব্যানার</div>
+                      </div>
+                    </div>
+
+                    {/* Toolbar & Controls */}
+                    <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={handleOpenAddAd}
+                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-colors flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>নতুন বিজ্ঞাপন / লিংক বসান (+ Add Ad)</span>
+                        </button>
+
+                        <button
+                          onClick={handleResetToAdsterraDefaults}
+                          className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
+                          title="Adsterra এর দুটি মূল লিংক রিস্টোর করুন"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Adsterra কোড রিস্টোর করুন</span>
+                        </button>
+                      </div>
+
+                      {/* Cooldown control */}
+                      <div className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>পপআন্ডার ব্যবধান:</span>
+                        <select
+                          value={popunderCooldownInput}
+                          onChange={(e) => {
+                            const val = Number(e.target.value) || 1;
+                            setPopunderCooldownInput(val);
+                            handleSaveCooldown(val);
+                          }}
+                          className="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                        >
+                          <option value="1">১ মিনিট পর পর (প্রস্তাবিত)</option>
+                          <option value="3">৩ মিনিট পর পর</option>
+                          <option value="5">৫ মিনিট পর পর</option>
+                          <option value="10">১০ মিনিট পর পর</option>
+                          <option value="0">প্রতি ক্লিকে (Always)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Add / Edit Form Modal/Panel */}
+                    {isAddingAd && (
+                      <div className="p-6 bg-slate-50 rounded-2xl border-2 border-emerald-500/50 shadow-md space-y-4 animate-fade-in">
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                          <h5 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                            {editingAd ? 'বিজ্ঞাপন এডিট করুন (Edit Ad)' : 'নতুন বিজ্ঞাপন লিংক বা স্ক্রিপ্ট যুক্ত করুন (Add New Ad)'}
+                          </h5>
+                          <button
+                            onClick={() => {
+                              setIsAddingAd(false);
+                              setEditingAd(null);
+                            }}
+                            className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <form onSubmit={handleSaveAdForm} className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">
+                                বিজ্ঞাপনের নাম (Ad Name / Title) *
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                value={adForm.name}
+                                onChange={(e) => setAdForm({ ...adForm, name: e.target.value })}
+                                placeholder="যেমন: Adsterra Popunder Link অথবা 160x300 Banner"
+                                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">
+                                বিজ্ঞাপনের ধরন (Ad Type) *
+                              </label>
+                              <select
+                                value={adForm.type}
+                                onChange={(e) => {
+                                  const newType = e.target.value as AdType;
+                                  setAdForm({
+                                    ...adForm,
+                                    type: newType,
+                                    placement: newType === 'popunder' ? 'popunder' : 'floating_corner'
+                                  });
+                                }}
+                                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                              >
+                                <option value="popunder">⚡ Popunder / Direct Smartlink (ইউজার ক্লিকে নতুন ট্যাব)</option>
+                                <option value="script_banner">🖼️ Script / Iframe Banner (Adsterra 160x300 ব্যানার কোড)</option>
+                                <option value="direct_link">🔗 Direct Sponsor Link (ওয়েবসাইটে স্পন্সর বাটন লিংক)</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Conditional Inputs based on Type */}
+                          {(adForm.type === 'popunder' || adForm.type === 'direct_link') && (
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">
+                                বিজ্ঞাপন লিংক (Ad URL / Target Link) *
+                              </label>
+                              <input
+                                type="url"
+                                required
+                                value={adForm.linkUrl}
+                                onChange={(e) => setAdForm({ ...adForm, linkUrl: e.target.value })}
+                                placeholder="https://www.profitableratecpmnetwork.com/..."
+                                className="w-full p-2.5 text-xs font-mono bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                              />
+                              <p className="text-[11px] text-slate-500 mt-1">
+                                ইউজার সাইটে যেকোনো জায়গায় ক্লিক করলে এই লিংকে রিডাইরেক্ট বা নতুন ট্যাবে ওপেন হবে।
+                              </p>
+                            </div>
+                          )}
+
+                          {(adForm.type === 'script_banner' || adForm.type === 'custom_html') && (
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1">
+                                স্ক্রিপ্ট বা আইফ্রেম কোড (Script / HTML Code) *
+                              </label>
+                              <textarea
+                                rows={5}
+                                required
+                                value={adForm.scriptCode}
+                                onChange={(e) => setAdForm({ ...adForm, scriptCode: e.target.value })}
+                                placeholder="<script>atOptions = { ... };</script><script src='https://www.highrevenueformat.com/.../invoke.js'></script>"
+                                className="w-full p-2.5 text-xs font-mono bg-slate-900 text-emerald-300 border border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                              />
+                              <p className="text-[11px] text-slate-500 mt-1">
+                                Adsterra, Google AdSense বা যেকোনো অ্যাড নেটওয়ার্কের স্ক্রিপ্ট কোড এখানে পেস্ট করুন। এটি সুরক্ষিত আইফ্রেমে লোড হবে।
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between pt-2">
+                            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={adForm.enabled}
+                                onChange={(e) => setAdForm({ ...adForm, enabled: e.target.checked })}
+                                className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                              />
+                              <span className="text-slate-800">এখনই ওয়েবসাইটে চালু রাখুন (Active Now)</span>
+                            </label>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsAddingAd(false);
+                                  setEditingAd(null);
+                                }}
+                                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+                              >
+                                বাতিল (Cancel)
+                              </button>
+                              <button
+                                type="submit"
+                                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow cursor-pointer flex items-center gap-1.5"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>{editingAd ? 'আপডেট করুন (Save Changes)' : 'সেভ ও পাবলিশ করুন (Add Ad)'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+
+                    {/* Ads List Card Container */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h5 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                          <span>বিজ্ঞাপনের তালিকা (Configured Ads)</span>
+                          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">
+                            {localAdConfig.ads.length} টি
+                          </span>
+                        </h5>
+                        <span className="text-xs text-slate-500">চালু বা বন্ধ করতে সুইচে ক্লিক করুন</span>
+                      </div>
+
+                      {localAdConfig.ads.length === 0 ? (
+                        <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
+                          <Megaphone className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                          <p className="text-xs text-slate-500 font-medium">কোনো বিজ্ঞাপন লিংক বা কোড সেট করা নেই।</p>
+                          <button
+                            onClick={handleResetToAdsterraDefaults}
+                            className="mt-3 px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl cursor-pointer"
+                          >
+                            Adsterra ডিফল্ট কোড যুক্ত করুন
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-3">
+                          {localAdConfig.ads.map((ad) => (
+                            <div
+                              key={ad.id}
+                              className={`p-4 rounded-2xl border transition-all ${
+                                ad.enabled
+                                  ? 'bg-white border-slate-200 shadow-xs hover:border-emerald-300'
+                                  : 'bg-slate-50/80 border-slate-200/60 opacity-75'
+                              }`}
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                {/* Left details */}
+                                <div className="space-y-1 flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h6 className="font-bold text-slate-900 text-sm truncate">{ad.name}</h6>
+                                    
+                                    {/* Type Badges */}
+                                    {ad.type === 'popunder' && (
+                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-extrabold rounded-full">
+                                        ⚡ Popunder Direct Link
+                                      </span>
+                                    )}
+                                    {ad.type === 'script_banner' && (
+                                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-extrabold rounded-full">
+                                        🖼️ 160x300 Script Banner
+                                      </span>
+                                    )}
+                                    {ad.type === 'direct_link' && (
+                                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold rounded-full">
+                                        🔗 Direct Sponsor Link
+                                      </span>
+                                    )}
+
+                                    {/* Status Pill */}
+                                    <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                                      ad.enabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                    }`}>
+                                      {ad.enabled ? '● চালু (ACTIVE)' : '○ বন্ধ (OFF)'}
+                                    </span>
+                                  </div>
+
+                                  {/* Link / Script preview */}
+                                  {ad.linkUrl && (
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 truncate pt-0.5">
+                                      <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                      <span className="font-mono text-[11px] truncate text-slate-700">{ad.linkUrl}</span>
+                                      <a
+                                        href={ad.linkUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-emerald-600 hover:text-emerald-700 text-[11px] font-bold flex items-center gap-0.5 shrink-0"
+                                      >
+                                        টেস্ট করুন <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    </div>
+                                  )}
+
+                                  {ad.scriptCode && (
+                                    <div className="text-[11px] font-mono text-slate-500 bg-slate-100 p-2 rounded-lg line-clamp-1 truncate max-w-xl">
+                                      {ad.scriptCode}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Right Action Buttons */}
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                  {/* Quick Toggle Button */}
+                                  <button
+                                    onClick={() => handleToggleAd(ad.id)}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                      ad.enabled
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm'
+                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                                    }`}
+                                    title={ad.enabled ? "বিজ্ঞাপনটি বন্ধ করতে ক্লিক করুন" : "বিজ্ঞাপনটি চালু করতে ক্লিক করুন"}
+                                  >
+                                    {ad.enabled ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5" />
+                                        <span>চালু (ON)</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <X className="w-3.5 h-3.5" />
+                                        <span>বন্ধ (OFF)</span>
+                                      </>
+                                    )}
+                                  </button>
+
+                                  {/* Edit Button */}
+                                  <button
+                                    onClick={() => handleOpenEditAd(ad)}
+                                    className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                                    title="এডিট করুন"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
+
+                                  {/* Delete Button */}
+                                  <button
+                                    onClick={() => handleDeleteAd(ad.id)}
+                                    className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                                    title="মুছে ফেলুন"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Live Preview Sandbox for Adsterra 160x300 Banner */}
+                    {localAdConfig.ads.some(a => a.type === 'script_banner' && a.enabled) && (
+                      <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                          <div>
+                            <h5 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                              <Sparkles className="w-4 h-4 text-amber-500" />
+                              <span>ব্যানার লাইভ প্রিভিউ (160x300 Live Sandbox Preview)</span>
+                            </h5>
+                            <p className="text-[11px] text-slate-500">ওয়েবসাইটের ডানদিকের নিচে এই ব্যানারটি লাইভ লোড হচ্ছে।</p>
+                          </div>
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">
+                            Sandboxed Iframe
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-center p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+                          <div className="w-[160px] h-[300px] bg-white rounded-lg shadow-md overflow-hidden border border-slate-200">
+                            <iframe
+                              title="Admin Ad Preview"
+                              srcDoc={`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=160, initial-scale=1.0" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 160px;
+        height: 300px;
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    ${localAdConfig.ads.find(a => a.type === 'script_banner' && a.enabled)?.scriptCode || ''}
+  </body>
+</html>`}
+                              className="w-[160px] h-[300px] border-0"
+                              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Storefront Top Announcement Bar Section */}
                     <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4">
                       <div className="flex items-center justify-between">
-                        <h5 className="font-bold text-slate-900 text-sm">Top Announcement Bar</h5>
+                        <div>
+                          <h5 className="font-bold text-slate-900 text-sm">ওয়েবসাইটের শীর্ষ ঘোষণা বার (Top Announcement Bar)</h5>
+                          <p className="text-xs text-slate-500">ওয়েবসাইটের একবারে শীর্ষে প্রমোশনাল অফার বা নোটিশ টেক্সট প্রদর্শন করুন।</p>
+                        </div>
                         <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
                           <input 
                             type="checkbox" 
                             checked={isPromoActive} 
                             onChange={(e) => setIsPromoActive(e.target.checked)}
-                            className="rounded text-emerald-600 focus:ring-emerald-500" 
+                            className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4" 
                           />
-                          <span>Active on Storefront</span>
+                          <span>ওয়েবসাইটে সক্রিয়</span>
                         </label>
                       </div>
 
                       <textarea
-                        rows={3}
+                        rows={2}
                         value={promoMessage}
                         onChange={(e) => setPromoMessage(e.target.value)}
+                        placeholder="যেমন: ✨ Special Eid Offer: Free Nationwide Express Shipping on Orders Over ৳2,000!"
                         className="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900"
                       />
 
                       <div className="flex items-center justify-between">
                         <button
-                          onClick={() => {
-                            setPromoSavedAlert(true);
-                            setTimeout(() => setPromoSavedAlert(false), 2500);
+                          onClick={async () => {
+                            try {
+                              const updated = {
+                                ...localSettings,
+                                announcementText: promoMessage,
+                                isAnnouncementActive: isPromoActive
+                              };
+                              setLocalSettings(updated);
+                              if (onUpdateStoreSettings) {
+                                onUpdateStoreSettings(updated);
+                              }
+                              await saveStoreSettings(updated);
+                              setPromoSavedAlert(true);
+                              setTimeout(() => setPromoSavedAlert(false), 2500);
+                            } catch (err) {
+                              console.error('Error saving announcement:', err);
+                            }
                           }}
-                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow"
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow flex items-center gap-1.5"
                         >
-                          Save Announcement
+                          <Check className="w-3.5 h-3.5" />
+                          <span>ঘোষণা সেভ করুন (Save Announcement)</span>
                         </button>
                         {promoSavedAlert && (
                           <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                            <Check className="w-4 h-4" /> Updated successfully!
+                            <Check className="w-4 h-4" /> সফলভাবে সেভ হয়েছে!
                           </span>
                         )}
                       </div>

@@ -25,7 +25,7 @@ import {
   Unsubscribe
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Product, Order, BannerAd, StoreSettings } from './types';
+import { Product, Order, BannerAd, StoreSettings, AdConfiguration } from './types';
 import { initialProducts, initialBanners } from './data/initialData';
 
 // Initialize Firebase App
@@ -394,6 +394,54 @@ export async function saveStoreSettings(settings: any): Promise<void> {
       ...settings,
       updatedAt: new Date().toISOString()
     }, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+// --- Firestore CRUD for Ad Management (Popunder, Direct Link, Script banners) ---
+
+export function subscribeToAdConfig(
+  onUpdate: (config: AdConfiguration) => void
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'settings', 'ad_configuration'),
+    (docSnap) => {
+      if (docSnap.exists()) {
+        onUpdate(docSnap.data() as AdConfiguration);
+      }
+    },
+    (error) => {
+      console.warn("Ad config snapshot note:", error);
+    }
+  );
+}
+
+export async function fetchAdConfig(): Promise<AdConfiguration | null> {
+  try {
+    const docRef = doc(db, 'settings', 'ad_configuration');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as AdConfiguration;
+    }
+  } catch (err) {
+    console.warn("Error fetching ad configuration from Firestore:", err);
+  }
+  return null;
+}
+
+export async function saveAdConfig(config: AdConfiguration): Promise<void> {
+  const path = 'settings/ad_configuration';
+  try {
+    await setDoc(doc(db, 'settings', 'ad_configuration'), {
+      ...config,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    try {
+      localStorage.setItem('himaya_ad_config', JSON.stringify(config));
+    } catch {
+      // ignore
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Product, CartItem, BannerAd, Order, StoreSettings } from './types';
-import { initialProducts, initialBanners } from './data/initialData';
+import { Product, CartItem, BannerAd, Order, StoreSettings, AdConfiguration } from './types';
+import { initialProducts, initialBanners, initialAdConfig } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { ProductCard } from './components/ProductCard';
@@ -14,6 +14,7 @@ import { AuthModal } from './components/AuthModal';
 import { InstallAppModal } from './components/InstallAppModal';
 import { Footer } from './components/Footer';
 import { FloatingSocialButtons } from './components/FloatingSocialButtons';
+import { AdManager } from './components/AdManager';
 import { Sparkles, SlidersHorizontal, Heart, X, Database } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -21,10 +22,13 @@ import {
   subscribeToOrders,
   subscribeToBanners,
   subscribeToStoreSettings,
+  subscribeToAdConfig,
   fetchProductsFromFirestore,
   fetchOrdersFromFirestore,
   fetchBannersFromFirestore,
   fetchStoreSettings,
+  fetchAdConfig,
+  saveAdConfig,
   seedProductsIfEmpty,
   seedBannersIfEmpty,
   testConnection,
@@ -78,6 +82,15 @@ export default function App() {
   const [banners, setBanners] = useState<BannerAd[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | undefined>(undefined);
+  const [adConfig, setAdConfig] = useState<AdConfiguration>(() => {
+    try {
+      const cached = localStorage.getItem('himaya_ad_config');
+      if (cached) return JSON.parse(cached);
+    } catch {
+      // ignore
+    }
+    return initialAdConfig;
+  });
   const [loading, setLoading] = useState(true);
 
   // Authentication: Firebase Auth (Admins/Google) + Customer User (Phone/Google)
@@ -112,12 +125,13 @@ export default function App() {
       let firestoreFetched = false;
       // 1. Fetch directly from Firebase Firestore
       try {
-        const [fbProds, fbOrders, fbBans, fbSets, fbEmails] = await Promise.all([
+        const [fbProds, fbOrders, fbBans, fbSets, fbEmails, fbAds] = await Promise.all([
           fetchProductsFromFirestore(),
           fetchOrdersFromFirestore(),
           fetchBannersFromFirestore(),
           fetchStoreSettings(),
-          fetchAdminEmails()
+          fetchAdminEmails(),
+          fetchAdConfig().catch(() => null)
         ]);
         if (fbProds) {
           setProducts(fbProds.map(sanitizeProduct));
@@ -127,17 +141,19 @@ export default function App() {
         if (fbBans) setBanners(fbBans);
         if (fbSets) setStoreSettings(fbSets);
         if (fbEmails && fbEmails.length > 0) setAdminEmails(fbEmails);
+        if (fbAds) setAdConfig(fbAds);
       } catch (fbErr) {
         console.warn("Firestore direct query error during fetch:", fbErr);
       }
 
       // 2. Only fetch API fallback/cache if Firestore was not available
       if (!firestoreFetched) {
-        const [prodRes, bannerRes, orderRes, settingsRes] = await Promise.all([
+        const [prodRes, bannerRes, orderRes, settingsRes, adsRes] = await Promise.all([
           fetch('/api/products').catch(() => null),
           fetch('/api/banners').catch(() => null),
           fetch('/api/orders').catch(() => null),
-          fetch('/api/settings').catch(() => null)
+          fetch('/api/settings').catch(() => null),
+          fetch('/api/ads').catch(() => null)
         ]);
         if (prodRes && prodRes.ok) {
           const prodData = await prodRes.json().catch(() => null);
@@ -154,6 +170,10 @@ export default function App() {
         if (settingsRes && settingsRes.ok) {
           const settingsData = await settingsRes.json().catch(() => null);
           if (settingsData) setStoreSettings(settingsData);
+        }
+        if (adsRes && adsRes.ok) {
+          const adsData = await adsRes.json().catch(() => null);
+          if (adsData) setAdConfig(adsData);
         }
       }
 
@@ -172,6 +192,7 @@ export default function App() {
     let unsubOrders: (() => void) | null = null;
     let unsubBanners: (() => void) | null = null;
     let unsubSettings: (() => void) | null = null;
+    let unsubAds: (() => void) | null = null;
     let unsubAuth: (() => void) | null = null;
 
     // 1. Initial quick load from local cache/API
@@ -238,6 +259,12 @@ export default function App() {
             setStoreSettings(sets);
           }
         });
+
+        unsubAds = subscribeToAdConfig((conf) => {
+          if (conf) {
+            setAdConfig(conf);
+          }
+        });
       } catch (err) {
         console.warn("Firestore listener initialization note:", err);
       }
@@ -250,6 +277,7 @@ export default function App() {
       if (unsubOrders) unsubOrders();
       if (unsubBanners) unsubBanners();
       if (unsubSettings) unsubSettings();
+      if (unsubAds) unsubAds();
       if (unsubAuth) unsubAuth();
     };
   }, []);
@@ -692,6 +720,8 @@ export default function App() {
             await saveAdminEmails(updated);
             setAdminEmails(updated);
           }}
+          adConfig={adConfig}
+          onUpdateAdConfig={(newConfig) => setAdConfig(newConfig)}
         />
       )}
 
@@ -725,6 +755,12 @@ export default function App() {
       <FloatingSocialButtons
         whatsappNumber={storeSettings?.whatsappNumber}
         facebookUrl={storeSettings?.facebookUrl}
+      />
+
+      {/* Website Ad Manager (Popunder & 160x300 Banner scripts) */}
+      <AdManager
+        config={adConfig}
+        isAdminOpen={isAdminOpen}
       />
 
       {/* Footer */}

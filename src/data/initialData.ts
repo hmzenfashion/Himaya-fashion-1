@@ -103,3 +103,38 @@ export const initialProducts: Product[] = [
     featured: true
   }
 ];
+
+export const initialAdConfig = {
+  globalAdsEnabled: true,
+  popunderCooldownMinutes: 1,
+  ads: [
+    {
+      id: "adsterra-popunder",
+      name: "Adsterra Popunder / Direct Smartlink",
+      type: "popunder" as const,
+      enabled: true,
+      linkUrl: "https://www.profitableratecpmnetwork.com/peqj1c1g?key=22bd9ad3eec7103becba033d685cb45f",
+      placement: "popunder" as const,
+      createdAt: "2026-03-01T00:00:00.000Z"
+    },
+    {
+      id: "adsterra-banner-160x300",
+      name: "Adsterra 160x300 Iframe Banner",
+      type: "script_banner" as const,
+      enabled: true,
+      scriptCode: `<script type="text/javascript">
+  atOptions = {
+    'key' : 'c4ae09df70d272d84914d3233703d9dd',
+    'format' : 'iframe',
+    'height' : 300,
+    'width' : 160,
+    'params' : {}
+  };
+</script>
+<script type="text/javascript" src="https://www.highrevenueformat.com/c4ae09df70d272d84914d3233703d9dd/invoke.js"></script>`,
+      placement: "floating_corner" as const,
+      createdAt: "2026-03-01T00:00:00.000Z"
+    }
+  ],
+  updatedAt: "2026-03-01T00:00:00.000Z"
+};

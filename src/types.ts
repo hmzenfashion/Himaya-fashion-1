@@ -108,3 +108,25 @@ export interface StoreSettings {
   isAppDownloadEnabled?: boolean;
 }
 
+export type AdType = 'popunder' | 'script_banner' | 'direct_link' | 'custom_html';
+export type AdPlacement = 'popunder' | 'floating_corner' | 'bottom_bar' | 'in_feed' | 'top_bar';
+
+export interface WebsiteAdItem {
+  id: string;
+  name: string;
+  type: AdType;
+  enabled: boolean;
+  linkUrl?: string;
+  scriptCode?: string;
+  placement?: AdPlacement;
+  clickCount?: number;
+  createdAt: string;
+}
+
+export interface AdConfiguration {
+  globalAdsEnabled: boolean;
+  popunderCooldownMinutes: number;
+  ads: WebsiteAdItem[];
+  updatedAt?: string;
+}
+
