@@ -76,17 +76,6 @@ export const Hero: React.FC<HeroProps> = ({
             >
               Discover All
             </button>
-
-            {isAppDownloadEnabled !== false && onDownloadAppClick && (
-              <button
-                onClick={onDownloadAppClick}
-                className="px-6 py-3.5 bg-white/10 hover:bg-[#C5A059] text-white border border-[#C5A059]/60 text-sm font-semibold tracking-wider uppercase transition-all cursor-pointer flex items-center gap-2 backdrop-blur-sm shadow-md"
-                title="Download apps - অফিশিয়াল অ্যাপ ডাউনলোড করুন"
-              >
-                <Smartphone className="w-4 h-4 text-[#E5C98B]" />
-                <span>{appButtonText}</span>
-              </button>
-            )}
           </div>
         </div>
       </div>

@@ -47,7 +47,9 @@ import {
   XCircle,
   RotateCcw,
   Archive,
-  MessageCircle
+  MessageCircle,
+  Pin,
+  Flame
 } from 'lucide-react';
 import { 
   saveProductToFirestore, 
@@ -791,7 +793,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     sizes: 'S, M, L, XL',
     colors: 'Black, Maroon, Navy',
     stock: 12,
-    featured: true
+    featured: true,
+    isPinned: false
   });
 
   // Gallery and upload state
@@ -1342,9 +1345,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
 
     const targetId = editingProduct ? editingProduct.id : ("prod-" + Date.now());
+    const createdAt = editingProduct?.createdAt || new Date().toISOString();
     const fullProduct: Product = {
       id: targetId,
-      ...payload
+      ...payload,
+      isPinned: Boolean(productForm.isPinned),
+      isPopular: Boolean(productForm.isPinned),
+      createdAt
     };
 
     try {
@@ -1358,14 +1365,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await fetch(`/api/products/${editingProduct.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(fullProduct)
       }).catch(() => {});
+      setLocalProducts(prev => prev.map(p => p.id === fullProduct.id ? fullProduct : p));
     } else {
       await fetch('/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(fullProduct)
       }).catch(() => {});
+      // Prepend newest product directly at top of list
+      setLocalProducts(prev => [fullProduct, ...prev]);
     }
 
     setEditingProduct(null);
@@ -1382,10 +1392,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       sizes: 'S, M, L, XL',
       colors: 'Black, Maroon, Navy',
       stock: 12,
-      featured: true
+      featured: true,
+      isPinned: false
     });
     setDiscountPercentInput('');
     onRefreshData();
+  };
+
+  const handleTogglePinProduct = async (product: Product) => {
+    const newPinned = !product.isPinned;
+    const updatedProduct: Product = {
+      ...product,
+      isPinned: newPinned,
+      isPopular: newPinned,
+      createdAt: product.createdAt || new Date().toISOString()
+    };
+
+    setLocalProducts(prev => prev.map(p => p.id === product.id ? updatedProduct : p));
+
+    try {
+      await saveProductToFirestore(updatedProduct);
+      await fetch(`/api/products/${product.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProduct)
+      }).catch(() => {});
+      setToastMessage(newPinned 
+        ? `📌 "${product.title}" জনপ্রিয় পণ্য হিসেবে পিন করা হয়েছে!` 
+        : `"${product.title}" আন-পিন করা হয়েছে।`);
+      onRefreshData();
+    } catch (err) {
+      console.warn("Toggle pin warning:", err);
+    }
   };
 
   const handlePromptDeleteProduct = (product: Product) => {
@@ -2608,7 +2646,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             sizes: 'S, M, L, XL',
                             colors: 'Maroon, Navy, Black',
                             stock: 15,
-                            featured: true
+                            featured: true,
+                            isPinned: false
                           });
                         }}
                         className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20 cursor-pointer"
@@ -3100,6 +3139,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             />
                           </div>
 
+                          {/* Row 6: Pin as Popular Product Toggle */}
+                          <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shadow-xs">
+                                <Pin className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                                  <span>Pin as Popular Product (জনপ্রিয় পণ্য হিসেবে পিন করুন)</span>
+                                  <span className="text-[9px] font-extrabold bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">Top 10 Shelf</span>
+                                </div>
+                                <div className="text-[10px] text-amber-800/80 mt-0.5">
+                                  পিন করা পণ্যগুলো ওয়েবসাইটের উপরে "Top 10 Popular Products" তালিকায় সবার আগে প্রদর্শিত হবে।
+                                </div>
+                              </div>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(productForm.isPinned)}
+                                onChange={e => setProductForm({ ...productForm, isPinned: e.target.checked })}
+                                className="sr-only peer"
+                              />
+                              <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                            </label>
+                          </div>
+
                           {/* Submit / Cancel Bar */}
                           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                             <button
@@ -3139,8 +3205,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {localProducts
+                            {[...localProducts]
                               .filter(p => !searchTerm || p.title.toLowerCase().includes(searchTerm.toLowerCase()) || p.category.toLowerCase().includes(searchTerm.toLowerCase()))
+                              .sort((a, b) => {
+                                const getProductTimestamp = (p: Product) => {
+                                  if (p.createdAt) {
+                                    const t = new Date(p.createdAt).getTime();
+                                    if (!isNaN(t)) return t;
+                                  }
+                                  const match = p.id.match(/^prod-(\d+)/);
+                                  if (match) return Number(match[1]);
+                                  return 0;
+                                };
+                                return getProductTimestamp(b) - getProductTimestamp(a);
+                              })
                               .map(p => (
                                 <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
                                   <td className="p-3.5 flex items-center gap-3">
@@ -3153,7 +3231,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       )}
                                     </div>
                                     <div>
-                                      <div className="font-bold text-slate-900">{p.title}</div>
+                                      <div className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                        <span>{p.title}</span>
+                                        {p.isPinned && (
+                                          <span className="inline-flex items-center gap-0.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                                            <Pin className="w-2.5 h-2.5 fill-current" />
+                                            <span>Pinned Popular</span>
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="text-[10px] text-slate-500 mt-0.5">ID: {p.id}</div>
                                     </div>
                                   </td>
@@ -3177,13 +3263,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     </span>
                                   </td>
                                   <td className="p-3.5">
-                                    {p.badge && (
-                                      <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase">
-                                        {p.badge}
-                                      </span>
-                                    )}
+                                    <div className="flex flex-col gap-1 items-start">
+                                      {p.isPinned && (
+                                        <span className="bg-amber-500 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase flex items-center gap-1">
+                                          <Pin className="w-2.5 h-2.5 fill-current" />
+                                          <span>Popular</span>
+                                        </span>
+                                      )}
+                                      {p.badge && (
+                                        <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase">
+                                          {p.badge}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTogglePinProduct(p)}
+                                      className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                                        p.isPinned 
+                                          ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm' 
+                                          : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                      }`}
+                                      title={p.isPinned ? "📌 পিন করা আছে (জনপ্রিয় পণ্য) - আন-পিন করতে ক্লিক করুন" : "📌 জনপ্রিয় পণ্য হিসেবে পিন করুন (Pin to Top 10 Popular)"}
+                                    >
+                                      <Pin className={`w-3.5 h-3.5 ${p.isPinned ? 'fill-current' : ''}`} />
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -3215,7 +3321,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                           sizes: p.sizes.join(', '),
                                           colors: p.colors.join(', '),
                                           stock: p.stock,
-                                          featured: p.featured || false
+                                          featured: p.featured || false,
+                                          isPinned: p.isPinned || false
                                         });
                                       }}
                                       className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"

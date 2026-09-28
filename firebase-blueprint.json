@@ -16,7 +16,10 @@
         "sizes": { "type": "array" },
         "colors": { "type": "array" },
         "stock": { "type": "number" },
-        "featured": { "type": "boolean" }
+        "featured": { "type": "boolean" },
+        "isPinned": { "type": "boolean" },
+        "isPopular": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["title", "price", "category", "image", "stock"]
     },

@@ -57,26 +57,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#E6E2DD] transition-all">
-      {/* Top announcement bar - with prominent "Download apps" in website's upper area */}
+      {/* Top announcement bar */}
       <div className="bg-[#1A1A1A] text-[#FAF9F6] text-xs py-2 px-4">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-center">
+        <div className="max-w-7xl mx-auto flex items-center justify-center text-center">
           <div className="flex items-center justify-center gap-1.5 tracking-wider uppercase font-medium text-[11px] sm:text-xs">
             <Sparkles className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
             <span>Delivery Charge: Inside Dhaka ৳80 &middot; Outside Dhaka ৳150 &middot; Cash on Delivery Available</span>
           </div>
-
-          {/* Prominent "Download apps" button at the very top of the website */}
-          {settings?.isAppDownloadEnabled !== false && onOpenInstallApp && (
-            <button
-              onClick={onOpenInstallApp}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#C5A059] hover:bg-[#B08D44] text-[#1A1A1A] hover:text-white font-bold text-xs uppercase tracking-wide shadow-sm transition-all cursor-pointer shrink-0"
-              title="Download apps - অফিশিয়াল অ্যাপ ডাউনলোড করুন"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{appButtonLabel}</span>
-              <span className="bg-[#1A1A1A] text-[#E5C98B] text-[9px] px-1.5 py-0.5 rounded-full font-mono">APK</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -157,19 +144,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Search className="w-5 h-5" />
             </button>
-
-            {/* Prominent "Download apps" button in main navbar header */}
-            {settings?.isAppDownloadEnabled !== false && onOpenInstallApp && (
-              <button
-                onClick={onOpenInstallApp}
-                className="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-full bg-gradient-to-r from-[#C5A059] to-[#D4AF37] hover:from-[#B08D44] hover:to-[#C5A059] text-white shadow-xs hover:shadow-md transition-all cursor-pointer group"
-                title="Download apps - ডাউনলোড অ্যাপ্স"
-              >
-                <Smartphone className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-                <span>{appButtonLabel}</span>
-                <span className="bg-white/20 text-white text-[9px] px-1 py-0.2 rounded font-mono uppercase">APK</span>
-              </button>
-            )}
 
             <button
               onClick={onOpenTracking}
@@ -304,27 +278,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* User Account / Admin links in mobile menu */}
           <div className="pt-4 border-t border-[#E6E2DD] flex flex-col gap-2">
-            {settings?.isAppDownloadEnabled !== false && onOpenInstallApp && (
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onOpenInstallApp();
-                }}
-                className="w-full flex items-center justify-between p-3 bg-gradient-to-r from-[#C5A059]/15 to-[#C5A059]/25 border border-[#C5A059]/40 rounded-xl text-left transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-[#C5A059] text-white flex items-center justify-center shadow-xs">
-                    <Smartphone className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-[#1A1A1A]">{appButtonLabel}</div>
-                    <div className="text-[10px] text-slate-500">Android APK &middot; Direct Fast Download</div>
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold text-white bg-[#C5A059] px-2.5 py-1 rounded-full uppercase">APK</span>
-              </button>
-            )}
-
             <button
               onClick={() => { onOpenTracking?.(); setMobileMenuOpen(false); }}
               className="flex items-center justify-center gap-2 w-full py-2.5 bg-[#FAF9F6] border border-[#E6E2DD] text-[#1A1A1A] text-xs font-semibold rounded-md hover:border-[#C5A059] hover:text-[#C5A059] transition-colors"

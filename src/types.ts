@@ -12,6 +12,9 @@ export interface Product {
   colors: string[];
   stock: number;
   featured?: boolean;
+  isPinned?: boolean;
+  isPopular?: boolean;
+  createdAt?: string;
 }
 
 export interface CartItem {

@@ -147,6 +147,12 @@ export function subscribeToProducts(
       snapshot.forEach(docSnap => {
         items.push({ ...docSnap.data(), id: docSnap.id } as Product);
       });
+      // Sort newest products first (admin panel products on top)
+      items.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+        return timeB - timeA;
+      });
       onUpdate(items);
     },
     (error) => {
@@ -163,6 +169,11 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
     const items: Product[] = [];
     snap.forEach(docSnap => {
       items.push({ ...docSnap.data(), id: docSnap.id } as Product);
+    });
+    items.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+      return timeB - timeA;
     });
     return items;
   } catch (error) {

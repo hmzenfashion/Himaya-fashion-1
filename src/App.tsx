@@ -12,6 +12,8 @@ import { FirebaseGuideModal } from './components/FirebaseGuideModal';
 import { OrderTrackingModal } from './components/OrderTrackingModal';
 import { AuthModal } from './components/AuthModal';
 import { InstallAppModal } from './components/InstallAppModal';
+import { InstallAppPopup } from './components/InstallAppPopup';
+import { PopularProductsSection } from './components/PopularProductsSection';
 import { Footer } from './components/Footer';
 import { FloatingSocialButtons } from './components/FloatingSocialButtons';
 import { AdManager } from './components/AdManager';
@@ -73,7 +75,10 @@ export const sanitizeProduct = (p: any): Product => {
     sizes: safeSizes,
     colors: safeColors,
     stock: typeof p?.stock === 'number' && !isNaN(p.stock) ? p.stock : 10,
-    featured: Boolean(p?.featured)
+    featured: Boolean(p?.featured),
+    isPinned: Boolean(p?.isPinned),
+    isPopular: Boolean(p?.isPopular || p?.isPinned),
+    createdAt: p?.createdAt ? String(p.createdAt) : undefined
   };
 };
 
@@ -443,7 +448,18 @@ export default function App() {
     });
   };
 
-  // Filtered & sorted products
+  // Helper to extract timestamp from createdAt or id
+  const getProductTimestamp = (p: Product) => {
+    if (p?.createdAt) {
+      const t = new Date(p.createdAt).getTime();
+      if (!isNaN(t)) return t;
+    }
+    const match = p?.id?.match(/^prod-(\d+)/);
+    if (match) return Number(match[1]);
+    return 0;
+  };
+
+  // Filtered & sorted products (newest products on top)
   const filteredProducts = (products || []).filter(p => {
     if (!p) return false;
     const title = (p.title || '').toLowerCase();
@@ -459,6 +475,9 @@ export default function App() {
     const priceB = typeof b?.price === 'number' ? b.price : Number(b?.price) || 0;
     if (sortBy === 'price-low') return priceA - priceB;
     if (sortBy === 'price-high') return priceB - priceA;
+    // Sort newest products on top
+    const timeDiff = getProductTimestamp(b) - getProductTimestamp(a);
+    if (timeDiff !== 0) return timeDiff;
     return (b?.featured ? 1 : 0) - (a?.featured ? 1 : 0);
   });
 
@@ -498,6 +517,15 @@ export default function App() {
         onDownloadAppClick={() => setIsInstallAppOpen(true)}
         isAppDownloadEnabled={storeSettings?.isAppDownloadEnabled}
         appButtonText={storeSettings?.appButtonText || "Download apps"}
+      />
+
+      {/* Top 10 Popular Products Showcase (Upper section of website) */}
+      <PopularProductsSection
+        products={products}
+        onSelectProduct={handleSelectProduct}
+        onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
+        wishlist={wishlist}
+        onToggleWishlist={handleToggleWishlist}
       />
 
       {/* Main Product Catalog Section */}
@@ -744,14 +772,12 @@ export default function App() {
         />
       )}
 
-      {/* Download Apps / Custom App File Download Modal */}
-      {isInstallAppOpen && (
-        <InstallAppModal
-          isOpen={isInstallAppOpen}
-          onClose={() => setIsInstallAppOpen(false)}
-          settings={storeSettings}
-        />
-      )}
+      {/* PWA 1-Click Auto Install App Popup for New Customers */}
+      <InstallAppPopup
+        settings={storeSettings}
+        forceOpen={isInstallAppOpen}
+        onClose={() => setIsInstallAppOpen(false)}
+      />
 
       {/* Floating WhatsApp and Facebook Social Buttons */}
       <FloatingSocialButtons
