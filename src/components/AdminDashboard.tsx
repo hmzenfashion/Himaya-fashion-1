@@ -496,6 +496,9 @@ interface AdminDashboardProps {
   products: Product[];
   banners?: BannerAd[];
   orders: Order[];
+  coupons?: any[];
+  onUpdateCoupons?: (coupons: any[]) => void;
+  onUpdateProducts?: (products: Product[]) => void;
   onRefreshData: () => void | Promise<void>;
   onOpenFirebaseGuide?: () => void;
   currentUser?: { email: string | null; displayName?: string | null; photoURL?: string | null } | null;

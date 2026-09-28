@@ -42,6 +42,25 @@ export const FirebaseGuideModal: React.FC<FirebaseGuideModalProps> = ({ isOpen, 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-5 text-xs sm:text-sm text-[#333]">
           
+          {/* Quota Exceeded / Billing Upgrade Notice */}
+          <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-3">
+            <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
+              <Flame className="w-5 h-5 text-amber-600 animate-bounce" />
+              <span>Firestore Quota / Free Tier Limit Notice</span>
+            </div>
+            <p className="text-amber-800 text-xs leading-relaxed">
+              আপনার প্রজেক্টে দৈনিক ফ্রি রিড কোটা (Free daily read units) অতিক্রম করেছে। কোটা রিসেট হতে পরবর্তী দিন পর্যন্ত অপেক্ষা করুন অথবা ফায়ারবেস কনসোলে গিয়ে বিলিং এনাবল / প্ল্যান আপগ্রেড করুন।
+            </p>
+            <a
+              href="https://console.firebase.google.com/project/leafy-task-q8chg/firestore/databases/ai-studio-himayafashion-6b68e4d8-b4dd-4436-98f8-1e7f626be6ae/data?openUpgradeDialog=true"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg transition-colors shadow-sm"
+            >
+              <span>Upgrade Firestore / Enable Billing (Firebase Console)</span>
+            </a>
+          </div>
+
           {/* Active Status Card */}
           <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
             <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">

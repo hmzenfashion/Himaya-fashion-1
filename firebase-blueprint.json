@@ -44,9 +44,26 @@
         "createdAt": { "type": "string", "maxLength": 50 },
         "customerId": { "type": "string", "maxLength": 128 },
         "customerAuthType": { "type": "string", "enum": ["google", "phone", "email"] },
-        "isFirstOrder": { "type": "boolean" }
+        "isFirstOrder": { "type": "boolean" },
+        "couponCode": { "type": "string", "maxLength": 40 },
+        "discountAmount": { "type": "number" }
       },
       "required": ["customerName", "phone", "address", "city", "items", "totalAmount", "status"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Store promo code discount voucher",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 40 },
+        "discountType": { "type": "string", "enum": ["percentage", "fixed", "free_shipping"] },
+        "discountValue": { "type": "number" },
+        "displayDiscount": { "type": "string", "maxLength": 40 },
+        "minSpend": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Expired"] },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["code", "discountType", "discountValue", "status"]
     },
     "Banner": {
       "title": "Banner",

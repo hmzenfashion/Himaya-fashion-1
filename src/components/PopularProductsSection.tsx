@@ -1,6 +1,6 @@
 import React from 'react';
 import { Product } from '../types';
-import { Sparkles, Flame, ChevronRight, Eye, ShoppingBag, Heart } from 'lucide-react';
+import { Sparkles, Flame, ChevronRight, Eye, ShoppingBag, Heart, Pin } from 'lucide-react';
 
 interface PopularProductsSectionProps {
   products: Product[];
@@ -17,12 +17,13 @@ export const PopularProductsSection: React.FC<PopularProductsSectionProps> = ({
   wishlist,
   onToggleWishlist,
 }) => {
-  // Pinned products are top priority as popular products
-  const pinnedProducts = products.filter(p => p.isPinned || p.isPopular);
+  // Pinned products MUST come first as popular products
+  const pinnedProducts = products.filter(p => Boolean(p.isPinned));
+  const otherPopular = products.filter(p => !p.isPinned && Boolean(p.isPopular));
   const otherProducts = products.filter(p => !p.isPinned && !p.isPopular);
 
-  // Combine to create the Top 10 Popular Products list
-  const popularList = [...pinnedProducts, ...otherProducts].slice(0, 10);
+  // Combine to create the Top 10 Popular Products list (pinned products always at top)
+  const popularList = [...pinnedProducts, ...otherPopular, ...otherProducts].slice(0, 10);
 
   if (popularList.length === 0) return null;
 
@@ -78,11 +79,18 @@ export const PopularProductsSection: React.FC<PopularProductsSectionProps> = ({
                   />
 
                   {/* Rank / Top badge */}
-                  <div className="absolute top-2 left-2 z-10 flex flex-col gap-1">
-                    <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full shadow-md flex items-center gap-1">
-                      <Flame className="w-3 h-3 fill-current" />
-                      <span>#{index + 1} Popular</span>
-                    </span>
+                  <div className="absolute top-2 left-2 z-10 flex flex-col gap-1 items-start">
+                    {product.isPinned ? (
+                      <span className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full shadow-md flex items-center gap-1 ring-1 ring-white/50">
+                        <Pin className="w-3 h-3 fill-current" />
+                        <span>#{index + 1} Pinned Popular</span>
+                      </span>
+                    ) : (
+                      <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full shadow-md flex items-center gap-1">
+                        <Flame className="w-3 h-3 fill-current" />
+                        <span>#{index + 1} Popular</span>
+                      </span>
+                    )}
 
                     {hasDiscount && discountPercent > 0 && (
                       <span className="bg-rose-600 text-white text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded shadow-xs w-max">

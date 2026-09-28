@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CartItem, Order, StoreSettings } from '../types';
+import { CartItem, Order, StoreSettings, CouponItem } from '../types';
 import {
   X,
   CheckCircle,
@@ -20,7 +20,10 @@ import {
   Sparkles,
   MessageCircle,
   ExternalLink,
-  Share2
+  Share2,
+  Tag,
+  Ticket,
+  Gift
 } from 'lucide-react';
 import {
   createOrderInFirestore,
@@ -28,7 +31,8 @@ import {
   loginCustomerWithEmail,
   registerCustomerWithEmail,
   signOutUser,
-  clearStoredCustomer
+  clearStoredCustomer,
+  fetchCouponsFromFirestore
 } from '../firebase';
 import {
   BANGLADESH_DIVISIONS,
@@ -46,6 +50,7 @@ interface CheckoutModalProps {
   currentUser?: CustomerUser | null;
   onCustomerAuthSuccess?: (customer: CustomerUser) => void;
   onSignOutCustomer?: () => void;
+  coupons?: CouponItem[];
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({

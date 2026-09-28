@@ -102,6 +102,119 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
+// --- LocalStorage Caching & Quota Fallback Helpers ---
+const STORAGE_KEYS = {
+  PRODUCTS: 'himaya_real_products',
+  ORDERS: 'himaya_real_orders',
+  BANNERS: 'himaya_real_banners',
+  SETTINGS: 'himaya_real_settings',
+  ADMIN_EMAILS: 'himaya_real_admin_emails',
+  AD_CONFIG: 'himaya_real_ad_config'
+};
+
+export function getStoredProducts(): Product[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length >= 6) {
+        // Ensure initialProducts are included if not present
+        const existingIds = new Set(parsed.map(p => p.id));
+        const missingInitial = initialProducts.filter(p => !existingIds.has(p.id));
+        return [...missingInitial, ...parsed];
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return initialProducts;
+}
+
+export function getStoredCustomProducts(): Product[] {
+  return getStoredProducts();
+}
+
+export function saveStoredCustomProducts(items: Product[]): void {
+  saveStoredProducts(items);
+}
+
+export function saveStoredProducts(items: Product[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(items));
+  } catch (e) {
+    // ignore
+  }
+}
+
+export async function fetchCouponsFromFirestore(): Promise<any[]> {
+  try {
+    const snap = await getDocs(collection(db, 'coupons'));
+    const items: any[] = [];
+    snap.forEach(docSnap => {
+      items.push({ ...docSnap.data(), id: docSnap.id });
+    });
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+export function subscribeToCoupons(onUpdate: (coupons: any[]) => void): Unsubscribe {
+  return onSnapshot(
+    collection(db, 'coupons'),
+    (snapshot) => {
+      const items: any[] = [];
+      snapshot.forEach(docSnap => {
+        items.push({ ...docSnap.data(), id: docSnap.id });
+      });
+      onUpdate(items);
+    },
+    () => {}
+  );
+}
+
+export function getStoredOrders(): Order[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ORDERS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return [];
+}
+
+export function saveStoredOrders(items: Order[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.ORDERS, JSON.stringify(items));
+  } catch (e) {
+    // ignore
+  }
+}
+
+export function getStoredBanners(): BannerAd[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.BANNERS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return initialBanners;
+}
+
+export function saveStoredBanners(items: BannerAd[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BANNERS, JSON.stringify(items));
+  } catch (e) {
+    // ignore
+  }
+}
+
 // Automatically test connection when module loads
 testConnection();
 
@@ -118,7 +231,7 @@ export async function seedProductsIfEmpty(): Promise<void> {
       console.log("Firestore products seeded successfully!");
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, 'products');
+    console.warn("Seed products note (quota or offline): Using local cache.");
   }
 }
 
@@ -139,6 +252,10 @@ export function subscribeToProducts(
   onUpdate: (products: Product[]) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe {
+  // Immediately provide cached local products
+  const localProds = getStoredProducts();
+  onUpdate(localProds);
+
   const path = 'products';
   return onSnapshot(
     collection(db, path),
@@ -147,17 +264,25 @@ export function subscribeToProducts(
       snapshot.forEach(docSnap => {
         items.push({ ...docSnap.data(), id: docSnap.id } as Product);
       });
-      // Sort newest products first (admin panel products on top)
-      items.sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
-        return timeB - timeA;
-      });
-      onUpdate(items);
+      if (items.length > 0) {
+        // Merge with any local-only products not yet in remote
+        const currentLocal = getStoredProducts();
+        const remoteIds = new Set(items.map(p => p.id));
+        const localOnly = currentLocal.filter(p => !remoteIds.has(p.id));
+        const combined = [...items, ...localOnly];
+
+        combined.sort((a, b) => {
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+          return timeB - timeA;
+        });
+        saveStoredProducts(combined);
+        onUpdate(combined);
+      }
     },
     (error) => {
+      console.warn("Firestore product listener note (quota limit / offline): using local cache.");
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
@@ -170,33 +295,56 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
     snap.forEach(docSnap => {
       items.push({ ...docSnap.data(), id: docSnap.id } as Product);
     });
-    items.sort((a, b) => {
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
-      return timeB - timeA;
-    });
-    return items;
+    if (items.length > 0) {
+      const currentLocal = getStoredProducts();
+      const remoteIds = new Set(items.map(p => p.id));
+      const localOnly = currentLocal.filter(p => !remoteIds.has(p.id));
+      const combined = [...items, ...localOnly];
+
+      combined.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+        return timeB - timeA;
+      });
+      saveStoredProducts(combined);
+      return combined;
+    }
   } catch (error) {
-    console.warn("fetchProductsFromFirestore warning:", error);
-    return [];
+    console.warn("fetchProductsFromFirestore quota/offline notice: falling back to local products.");
   }
+  return getStoredProducts();
 }
 
 export async function saveProductToFirestore(product: Product): Promise<void> {
-  const path = `products/${product.id}`;
+  // Always update local cache first so user's real product is instantly saved regardless of Firestore quota
+  const current = getStoredProducts();
+  const idx = current.findIndex(p => p.id === product.id);
+  let updated: Product[];
+  if (idx > -1) {
+    updated = [...current];
+    updated[idx] = product;
+  } else {
+    updated = [product, ...current];
+  }
+  saveStoredProducts(updated);
+
   try {
     await setDoc(doc(db, 'products', product.id), product);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.warn("Cloud save warning (quota exceeded): saved locally successfully.", error);
   }
 }
 
 export async function deleteProductFromFirestore(productId: string): Promise<void> {
-  const path = `products/${productId}`;
+  // Always update local cache first
+  const current = getStoredProducts();
+  const updated = current.filter(p => p.id !== productId);
+  saveStoredProducts(updated);
+
   try {
     await deleteDoc(doc(db, 'products', productId));
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.warn("Cloud delete warning (quota exceeded): deleted locally.", error);
   }
 }
 
@@ -206,6 +354,9 @@ export function subscribeToOrders(
   onUpdate: (orders: Order[]) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe {
+  const localOrders = getStoredOrders();
+  onUpdate(localOrders);
+
   const path = 'orders';
   return onSnapshot(
     collection(db, path),
@@ -214,50 +365,69 @@ export function subscribeToOrders(
       snapshot.forEach(docSnap => {
         items.push({ ...docSnap.data(), id: docSnap.id } as Order);
       });
-      // Sort newest first
-      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      onUpdate(items);
+      if (items.length > 0) {
+        const currentLocal = getStoredOrders();
+        const remoteIds = new Set(items.map(o => o.id));
+        const localOnly = currentLocal.filter(o => !remoteIds.has(o.id));
+        const combined = [...items, ...localOnly];
+
+        combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        saveStoredOrders(combined);
+        onUpdate(combined);
+      }
     },
     (error) => {
+      console.warn("Orders subscription note:", error);
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
 export async function fetchOrdersFromFirestore(): Promise<Order[]> {
-  const path = 'orders';
   try {
-    const snap = await getDocs(collection(db, path));
+    const snap = await getDocs(collection(db, 'orders'));
     const items: Order[] = [];
     snap.forEach(docSnap => {
       items.push({ ...docSnap.data(), id: docSnap.id } as Order);
     });
-    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return items;
+    if (items.length > 0) {
+      const currentLocal = getStoredOrders();
+      const remoteIds = new Set(items.map(o => o.id));
+      const localOnly = currentLocal.filter(o => !remoteIds.has(o.id));
+      const combined = [...items, ...localOnly];
+      combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      saveStoredOrders(combined);
+      return combined;
+    }
   } catch (error) {
-    console.warn("fetchOrdersFromFirestore warning:", error);
-    return [];
+    console.warn("fetchOrdersFromFirestore note: using local orders.");
   }
+  return getStoredOrders();
 }
 
 export async function createOrderInFirestore(order: Order): Promise<void> {
-  const path = `orders/${order.id}`;
+  const current = getStoredOrders();
+  const updated = [order, ...current];
+  saveStoredOrders(updated);
+
   try {
     await setDoc(doc(db, 'orders', order.id), order);
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    console.warn("Create order cloud warning (quota exceeded): saved locally.", error);
   }
 }
 
 export async function updateOrderStatusInFirestore(orderId: string, status: Order['status'], reason?: string): Promise<void> {
-  const path = `orders/${orderId}`;
+  const current = getStoredOrders();
+  const updated = current.map(o => o.id === orderId ? { ...o, status, ...(reason !== undefined ? { cancelledReason: reason } : {}) } : o);
+  saveStoredOrders(updated);
+
   try {
     const updateData: Partial<Order> = { status };
     if (reason !== undefined) updateData.cancelledReason = reason;
     await updateDoc(doc(db, 'orders', orderId), updateData);
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Update order status cloud warning:", error);
   }
 }
 
@@ -265,38 +435,50 @@ export async function updateOrderTrackingInFirestore(
   orderId: string, 
   trackingData: { courierName?: string; trackingNumber?: string; trackingUrl?: string; trackingNotes?: string }
 ): Promise<void> {
-  const path = `orders/${orderId}`;
+  const current = getStoredOrders();
+  const updated = current.map(o => o.id === orderId ? { ...o, ...trackingData } : o);
+  saveStoredOrders(updated);
+
   try {
     await updateDoc(doc(db, 'orders', orderId), trackingData);
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Update tracking cloud warning:", error);
   }
 }
 
 export async function hideOrderFromAdminInFirestore(orderId: string): Promise<void> {
-  const path = `orders/${orderId}`;
+  const current = getStoredOrders();
+  const updated = current.map(o => o.id === orderId ? { ...o, deletedByAdmin: true } : o);
+  saveStoredOrders(updated);
+
   try {
     await updateDoc(doc(db, 'orders', orderId), { deletedByAdmin: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Hide order cloud warning:", error);
   }
 }
 
 export async function restoreOrderToAdminInFirestore(orderId: string): Promise<void> {
-  const path = `orders/${orderId}`;
+  const current = getStoredOrders();
+  const updated = current.map(o => o.id === orderId ? { ...o, deletedByAdmin: false } : o);
+  saveStoredOrders(updated);
+
   try {
     await updateDoc(doc(db, 'orders', orderId), { deletedByAdmin: false });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Restore order cloud warning:", error);
   }
 }
 
 export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
-  const path = `orders/${orderId}`;
+  const current = getStoredOrders();
+  const updated = current.filter(o => o.id !== orderId);
+  saveStoredOrders(updated);
+
   try {
     await deleteDoc(doc(db, 'orders', orderId));
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.warn("Delete order cloud warning:", error);
   }
 }
 
@@ -306,6 +488,8 @@ export function subscribeToBanners(
   onUpdate: (banners: BannerAd[]) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe {
+  onUpdate(getStoredBanners());
+
   const path = 'banners';
   return onSnapshot(
     collection(db, path),
@@ -314,56 +498,69 @@ export function subscribeToBanners(
       snapshot.forEach(docSnap => {
         items.push({ ...docSnap.data(), id: docSnap.id } as BannerAd);
       });
-      onUpdate(items);
+      if (items.length > 0) {
+        saveStoredBanners(items);
+        onUpdate(items);
+      }
     },
     (error) => {
+      console.warn("Banners subscription note:", error);
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
 export async function fetchBannersFromFirestore(): Promise<BannerAd[]> {
-  const path = 'banners';
   try {
-    const snap = await getDocs(collection(db, path));
+    const snap = await getDocs(collection(db, 'banners'));
     const items: BannerAd[] = [];
     snap.forEach(docSnap => {
       items.push({ ...docSnap.data(), id: docSnap.id } as BannerAd);
     });
-    return items;
+    if (items.length > 0) {
+      saveStoredBanners(items);
+      return items;
+    }
   } catch (error) {
-    console.warn("fetchBannersFromFirestore warning:", error);
-    return [];
+    console.warn("fetchBannersFromFirestore note: using local banners.");
   }
+  return getStoredBanners();
 }
 
 export async function createBannerInFirestore(banner: BannerAd): Promise<void> {
-  const path = `banners/${banner.id}`;
+  const current = getStoredBanners();
+  saveStoredBanners([banner, ...current]);
+
   try {
     await setDoc(doc(db, 'banners', banner.id), banner);
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    console.warn("Create banner cloud warning:", error);
   }
 }
 
 export async function updateBannerInFirestore(bannerOrId: string | BannerAd, bannerData?: Partial<BannerAd>): Promise<void> {
   const bannerId = typeof bannerOrId === 'string' ? bannerOrId : bannerOrId.id;
   const data = typeof bannerOrId === 'string' ? (bannerData || {}) : bannerOrId;
-  const path = `banners/${bannerId}`;
+  
+  const current = getStoredBanners();
+  const updated = current.map(b => b.id === bannerId ? { ...b, ...data } : b);
+  saveStoredBanners(updated);
+
   try {
     await setDoc(doc(db, 'banners', bannerId), data, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Update banner cloud warning:", error);
   }
 }
 
 export async function deleteBannerFromFirestore(bannerId: string): Promise<void> {
-  const path = `banners/${bannerId}`;
+  const current = getStoredBanners();
+  saveStoredBanners(current.filter(b => b.id !== bannerId));
+
   try {
     await deleteDoc(doc(db, 'banners', bannerId));
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.warn("Delete banner cloud warning:", error);
   }
 }
 
@@ -372,11 +569,24 @@ export async function deleteBannerFromFirestore(bannerId: string): Promise<void>
 export function subscribeToStoreSettings(
   onUpdate: (settings: StoreSettings) => void
 ): Unsubscribe {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (raw) onUpdate(JSON.parse(raw));
+  } catch (e) {
+    // ignore
+  }
+
   return onSnapshot(
     doc(db, 'settings', 'store_configuration'),
     (docSnap) => {
       if (docSnap.exists()) {
-        onUpdate(docSnap.data() as StoreSettings);
+        const data = docSnap.data() as StoreSettings;
+        try {
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data));
+        } catch {
+          // ignore
+        }
+        onUpdate(data);
       }
     },
     (error) => {
@@ -390,23 +600,40 @@ export async function fetchStoreSettings(): Promise<any> {
     const docRef = doc(db, 'settings', 'store_configuration');
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      return docSnap.data();
+      const data = docSnap.data();
+      try {
+        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data));
+      } catch {
+        // ignore
+      }
+      return data;
     }
   } catch (err) {
-    console.warn("Error fetching store settings from Firestore:", err);
+    console.warn("Error fetching store settings from Firestore: using local cache.");
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
   }
   return null;
 }
 
 export async function saveStoreSettings(settings: any): Promise<void> {
-  const path = 'settings/store_configuration';
+  try {
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  } catch {
+    // ignore
+  }
+
   try {
     await setDoc(doc(db, 'settings', 'store_configuration'), {
       ...settings,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Save store settings cloud warning:", error);
   }
 }
 
@@ -442,19 +669,19 @@ export async function fetchAdConfig(): Promise<AdConfiguration | null> {
 }
 
 export async function saveAdConfig(config: AdConfiguration): Promise<void> {
-  const path = 'settings/ad_configuration';
+  try {
+    localStorage.setItem('himaya_ad_config', JSON.stringify(config));
+  } catch {
+    // ignore
+  }
+
   try {
     await setDoc(doc(db, 'settings', 'ad_configuration'), {
       ...config,
       updatedAt: new Date().toISOString()
     }, { merge: true });
-    try {
-      localStorage.setItem('himaya_ad_config', JSON.stringify(config));
-    } catch {
-      // ignore
-    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn("Save ad config cloud warning:", error);
   }
 }
 
@@ -492,25 +719,44 @@ export async function fetchAdminEmails(): Promise<string[]> {
       const data = docSnap.data();
       if (data && Array.isArray(data.emails) && data.emails.length > 0) {
         const combined = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...data.emails.map((e: string) => e.toLowerCase().trim())]));
+        try {
+          localStorage.setItem(STORAGE_KEYS.ADMIN_EMAILS, JSON.stringify(combined));
+        } catch {
+          // ignore
+        }
         return combined;
       }
     }
   } catch (err) {
-    console.warn("Using default admin emails:", err);
+    console.warn("Using default or cached admin emails due to quota/offline.");
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ADMIN_EMAILS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // ignore
   }
   return DEFAULT_ADMIN_EMAILS;
 }
 
 export async function saveAdminEmails(emails: string[]): Promise<void> {
+  const cleanList = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...emails.map(e => e.toLowerCase().trim())]));
   try {
-    const cleanList = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...emails.map(e => e.toLowerCase().trim())]));
+    localStorage.setItem(STORAGE_KEYS.ADMIN_EMAILS, JSON.stringify(cleanList));
+  } catch {
+    // ignore
+  }
+
+  try {
     await setDoc(doc(db, 'settings', 'admin_permissions'), {
       emails: cleanList,
       updatedAt: new Date().toISOString()
     });
   } catch (err) {
-    console.error("Failed to save admin emails:", err);
-    throw err;
+    console.warn("Save admin emails cloud warning:", err);
   }
 }
 

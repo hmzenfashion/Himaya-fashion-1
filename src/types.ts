@@ -75,6 +75,21 @@ export interface Order {
   deletedByAdmin?: boolean;
   cancelledReason?: string;
   isFirstOrder?: boolean;
+  couponCode?: string;
+  discountAmount?: number;
+}
+
+export interface CouponItem {
+  id: string;
+  code: string;
+  discountType: 'percentage' | 'fixed' | 'free_shipping';
+  discountValue: number;
+  displayDiscount: string;
+  discount?: string;
+  offerTitle?: string;
+  minSpend: number;
+  status: 'Active' | 'Expired';
+  createdAt?: string;
 }
 
 export interface CustomerUser {
@@ -111,6 +126,7 @@ export interface StoreSettings {
   appDownloadNotes?: string;
   appButtonText?: string; // e.g. "Download apps"
   isAppDownloadEnabled?: boolean;
+  coupons?: CouponItem[];
 }
 
 export type AdType = 'popunder' | 'script_banner' | 'direct_link' | 'custom_html';

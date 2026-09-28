@@ -76,6 +76,11 @@ service cloud.firestore {
       allow read, write: if isValidId(settingId);
     }
 
+    // Coupons collection
+    match /coupons/{couponId} {
+      allow read, write: if isValidId(couponId);
+    }
+
     // Admins collection
     match /admins/{adminId} {
       allow read, write: if isValidId(adminId);

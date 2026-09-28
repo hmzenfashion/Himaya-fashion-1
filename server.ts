@@ -31,6 +31,9 @@ interface Product {
   colors: string[];
   stock: number;
   featured?: boolean;
+  isPinned?: boolean;
+  isPopular?: boolean;
+  createdAt?: string;
 }
 
 interface BannerAd {
@@ -81,6 +84,8 @@ interface Order {
   deletedByAdmin?: boolean;
   cancelledReason?: string;
   isFirstOrder?: boolean;
+  couponCode?: string;
+  discountAmount?: number;
 }
 
 interface StoreSettings {
@@ -103,10 +108,24 @@ interface StoreSettings {
   isAppDownloadEnabled?: boolean;
 }
 
+export interface CouponItem {
+  id: string;
+  code: string;
+  discountType: 'percentage' | 'fixed' | 'free_shipping';
+  discountValue: number;
+  displayDiscount: string;
+  discount?: string;
+  offerTitle?: string;
+  minSpend: number;
+  status: 'Active' | 'Expired';
+  createdAt?: string;
+}
+
 interface StoreData {
   products: Product[];
   banners: BannerAd[];
   orders: Order[];
+  coupons?: CouponItem[];
   settings?: StoreSettings;
   adConfig?: any;
   version: string;
@@ -431,7 +450,10 @@ app.post("/api/products", (req, res) => {
     sizes: req.body.sizes || ["S", "M", "L"],
     colors: req.body.colors || ["Black", "White"],
     stock: Number(req.body.stock) || 10,
-    featured: Boolean(req.body.featured)
+    featured: Boolean(req.body.featured),
+    isPinned: Boolean(req.body.isPinned),
+    isPopular: Boolean(req.body.isPopular || req.body.isPinned),
+    createdAt: req.body.createdAt || new Date().toISOString()
   };
   data.products.unshift(newProduct);
   saveStoreData(data);
@@ -452,6 +474,9 @@ app.put("/api/products/:id", (req, res) => {
     originalPrice: req.body.originalPrice !== undefined ? (req.body.originalPrice ? Number(req.body.originalPrice) : undefined) : data.products[idx].originalPrice,
     stock: req.body.stock !== undefined ? Number(req.body.stock) : data.products[idx].stock,
     images: Array.isArray(req.body.images) ? req.body.images : data.products[idx].images,
+    isPinned: req.body.isPinned !== undefined ? Boolean(req.body.isPinned) : data.products[idx].isPinned,
+    isPopular: req.body.isPopular !== undefined ? Boolean(req.body.isPopular) : (req.body.isPinned !== undefined ? Boolean(req.body.isPinned) : data.products[idx].isPopular),
+    createdAt: data.products[idx].createdAt || req.body.createdAt || new Date().toISOString()
   };
   saveStoreData(data);
   res.json({ success: true, product: data.products[idx] });
@@ -523,6 +548,78 @@ app.put("/api/banners", (req, res) => {
   }
   saveStoreData(data);
   res.json({ success: true, banners: data.banners });
+});
+
+// Coupons API
+const defaultCouponsList: CouponItem[] = [
+  { id: '1', code: 'EID2026', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', discount: '20% OFF', offerTitle: 'ঈদ স্পেশাল ২০% ছাড় অফার', minSpend: 1000, status: 'Active' },
+  { id: '2', code: 'WELCOME10', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', discount: '10% OFF', offerTitle: 'নতুন গ্রাহকদের জন্য ১০% ছাড়', minSpend: 500, status: 'Active' },
+  { id: '3', code: 'FREESHIP', discountType: 'free_shipping', discountValue: 0, displayDiscount: 'Free Shipping', discount: 'Free Shipping', offerTitle: 'ফ্রি ডেলিভারি অফার (Free Shipping)', minSpend: 1500, status: 'Active' },
+  { id: '4', code: 'SAVE150', discountType: 'fixed', discountValue: 150, displayDiscount: '৳150 OFF', discount: '৳150 OFF', offerTitle: 'ফ্ল্যাট ৳১৫০ ছাড়', minSpend: 1200, status: 'Active' },
+];
+
+app.get("/api/coupons", (req, res) => {
+  const data = getStoreData();
+  if (!data.coupons || !Array.isArray(data.coupons) || data.coupons.length === 0) {
+    data.coupons = defaultCouponsList;
+    saveStoreData(data);
+  }
+  res.json(data.coupons);
+});
+
+app.post("/api/coupons", (req, res) => {
+  const data = getStoreData();
+  if (Array.isArray(req.body)) {
+    data.coupons = req.body;
+  } else if (req.body && req.body.code) {
+    if (!Array.isArray(data.coupons)) data.coupons = [];
+    const discountType = req.body.discountType || 'percentage';
+    const discountValue = Number(req.body.discountValue) || 10;
+    const displayDiscount = req.body.displayDiscount || (discountType === 'percentage' ? `${discountValue}% OFF` : (discountType === 'fixed' ? `৳${discountValue} OFF` : 'Free Shipping'));
+    const newCoupon: CouponItem = {
+      id: req.body.id || ("coup-" + Date.now()),
+      code: String(req.body.code).trim().toUpperCase(),
+      discountType,
+      discountValue,
+      displayDiscount,
+      discount: displayDiscount,
+      offerTitle: req.body.offerTitle || displayDiscount,
+      minSpend: Number(req.body.minSpend) || 0,
+      status: req.body.status || 'Active',
+      createdAt: req.body.createdAt || new Date().toISOString()
+    };
+    data.coupons = [newCoupon, ...data.coupons.filter(c => c.id !== newCoupon.id && c.code !== newCoupon.code)];
+  }
+  saveStoreData(data);
+  res.json({ success: true, coupons: data.coupons });
+});
+
+app.put("/api/coupons/:id", (req, res) => {
+  const { id } = req.params;
+  const data = getStoreData();
+  if (!Array.isArray(data.coupons)) data.coupons = [];
+  const idx = data.coupons.findIndex(c => c.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Coupon not found" });
+  }
+  data.coupons[idx] = {
+    ...data.coupons[idx],
+    ...req.body,
+    code: req.body.code ? String(req.body.code).trim().toUpperCase() : data.coupons[idx].code,
+    displayDiscount: req.body.displayDiscount || data.coupons[idx].displayDiscount,
+    discount: req.body.displayDiscount || data.coupons[idx].displayDiscount
+  };
+  saveStoreData(data);
+  res.json({ success: true, coupon: data.coupons[idx], coupons: data.coupons });
+});
+
+app.delete("/api/coupons/:id", (req, res) => {
+  const { id } = req.params;
+  const data = getStoreData();
+  if (!Array.isArray(data.coupons)) data.coupons = [];
+  data.coupons = data.coupons.filter(c => c.id !== id);
+  saveStoreData(data);
+  res.json({ success: true, coupons: data.coupons });
 });
 
 // Settings API (bKash, Nagad, announcements, delivery)

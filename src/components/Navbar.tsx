@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Heart, Search, ShieldCheck, Menu, X, User, Sparkles, LogIn, LogOut, Truck, Smartphone, Download } from 'lucide-react';
+import { ShoppingBag, Heart, Search, ShieldCheck, Menu, X, User, Sparkles, LogIn, LogOut, Truck, Smartphone, Download, Flame } from 'lucide-react';
 import { StoreSettings } from '../types';
 
 interface NavbarProps {
@@ -82,7 +82,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Desktop Nav Links */}
-          <nav className="hidden lg:flex items-center space-x-8 text-sm font-medium tracking-wide uppercase">
+          <nav className="hidden lg:flex items-center space-x-6 text-sm font-medium tracking-wide uppercase">
             <button
               onClick={() => { setSelectedCategory('All'); }}
               className={`transition-colors py-2 border-b-2 ${
@@ -91,17 +91,24 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               All Collection
             </button>
-            {categories.filter(c => c !== 'All').map(cat => (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`transition-colors py-2 border-b-2 ${
-                  selectedCategory === cat ? 'border-[#C5A059] text-[#C5A059]' : 'border-transparent text-[#1A1A1A] hover:text-[#C5A059]'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+            {categories.filter(c => c !== 'All').map(cat => {
+              const isPop = cat.includes('Popular') || cat.includes('জনপ্রিয়');
+              const isSelected = selectedCategory === cat;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`transition-colors py-2 border-b-2 flex items-center gap-1.5 ${
+                    isSelected 
+                      ? (isPop ? 'border-amber-500 text-amber-600 font-bold' : 'border-[#C5A059] text-[#C5A059]')
+                      : (isPop ? 'border-transparent text-amber-700 hover:text-amber-600 font-semibold' : 'border-transparent text-[#1A1A1A] hover:text-[#C5A059]')
+                  }`}
+                >
+                  {isPop && <Flame className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />}
+                  <span>{cat}</span>
+                </button>
+              );
+            })}
           </nav>
 
           {/* Center: Brand Logo */}
@@ -264,17 +271,31 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             All Collection
           </button>
-          {categories.filter(c => c !== 'All').map(cat => (
-            <button
-              key={cat}
-              onClick={() => { setSelectedCategory(cat); setMobileMenuOpen(false); }}
-              className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
-                selectedCategory === cat ? 'bg-[#C5A059] text-white' : 'text-[#1A1A1A] hover:bg-[#FAF9F6]'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+          {categories.filter(c => c !== 'All').map(cat => {
+            const isPop = cat.includes('Popular') || cat.includes('জনপ্রিয়');
+            const isSelected = selectedCategory === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => { setSelectedCategory(cat); setMobileMenuOpen(false); }}
+                className={`flex items-center justify-between w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
+                  isSelected 
+                    ? (isPop ? 'bg-amber-500 text-white font-bold' : 'bg-[#C5A059] text-white')
+                    : (isPop ? 'text-amber-800 bg-amber-50/70 hover:bg-amber-100 font-semibold' : 'text-[#1A1A1A] hover:bg-[#FAF9F6]')
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {isPop && <Flame className="w-4 h-4 fill-amber-500 text-amber-500" />}
+                  <span>{cat}</span>
+                </div>
+                {isPop && (
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-200/60 text-amber-950">
+                    Trending
+                  </span>
+                )}
+              </button>
+            );
+          })}
 
           {/* User Account / Admin links in mobile menu */}
           <div className="pt-4 border-t border-[#E6E2DD] flex flex-col gap-2">
