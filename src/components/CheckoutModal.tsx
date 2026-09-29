@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { CartItem, Order, StoreSettings, CouponItem } from '../types';
 import {
   X,
@@ -62,6 +62,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   currentUser,
   onCustomerAuthSuccess,
   onSignOutCustomer,
+  coupons = [],
 }) => {
   // REQUIREMENT: Form fields must start EMPTY for every new order
   const [formData, setFormData] = useState({
@@ -82,6 +83,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [copiedType, setCopiedType] = useState<'bkash' | 'nagad' | 'whatsapp' | null>(null);
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+
+  // Coupon / Promo code state
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponItem | null>(null);
+  const [couponError, setCouponError] = useState('');
+  const [couponSuccess, setCouponSuccess] = useState('');
 
   // Auth gate state when guest clicks "Confirm Order"
   const [showAuthGate, setShowAuthGate] = useState(false);
@@ -110,11 +117,45 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       });
       setCompletedOrder(null);
       setFormErrors({});
+      setCouponInput('');
+      setAppliedCoupon(null);
+      setCouponError('');
+      setCouponSuccess('');
       setShowAuthGate(!currentUser);
       setAuthError(currentUser ? '' : 'অর্ডার করার জন্য অ্যাকাউন্টে লগইন করা বাধ্যতামূলক। অনুগ্রহ করে লগইন বা রেজিস্টার করুন।');
       setDeliveryArea('Inside Dhaka');
     }
   }, [isOpen, currentUser]);
+
+  // Available coupons pool (from props, localStorage, and defaults)
+  const availableCoupons: CouponItem[] = useMemo(() => {
+    const list: CouponItem[] = [...coupons];
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingCodes = new Set(list.map(c => c.code.toUpperCase()));
+          parsed.forEach((c: any) => {
+            if (c?.code && !existingCodes.has(c.code.toUpperCase())) {
+              list.push(c);
+            }
+          });
+        }
+      }
+    } catch {}
+
+    if (list.length === 0) {
+      return [
+        { id: 'c1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', minSpend: 1000, status: 'Active' },
+        { id: 'c2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', minSpend: 500, status: 'Active' },
+        { id: 'c3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 150, displayDiscount: 'Free Shipping', minSpend: 1500, status: 'Active' },
+        { id: 'c4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', minSpend: 800, status: 'Active' },
+        { id: 'c5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', minSpend: 2000, status: 'Active' },
+      ];
+    }
+    return list;
+  }, [coupons]);
 
   if (!isOpen) return null;
 
@@ -122,7 +163,69 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const outsideRate = storeSettings?.deliveryChargeOutsideDhaka ?? 150;
   const deliveryCharge = deliveryArea === 'Inside Dhaka' ? insideRate : outsideRate;
   const subtotal = cartItems.reduce((acc, i) => acc + i.product.price * i.quantity, 0);
-  const total = subtotal + deliveryCharge;
+
+  // Calculate promo discount
+  let discountAmount = 0;
+  let isFreeShippingApplied = false;
+
+  if (appliedCoupon) {
+    const rawDiscount = (appliedCoupon.discount || appliedCoupon.displayDiscount || '').trim().toLowerCase();
+    if (appliedCoupon.discountType === 'free_shipping' || rawDiscount.includes('free ship') || rawDiscount.includes('freeship')) {
+      isFreeShippingApplied = true;
+      discountAmount = deliveryCharge;
+    } else if (appliedCoupon.discountType === 'percentage' || rawDiscount.includes('%')) {
+      const match = rawDiscount.match(/([0-9]+(\.[0-9]+)?)/);
+      const percentage = appliedCoupon.discountValue || (match ? parseFloat(match[1]) : 0);
+      discountAmount = Math.round((subtotal * percentage) / 100);
+    } else {
+      const match = rawDiscount.match(/([0-9]+(\.[0-9]+)?)/);
+      const fixedVal = appliedCoupon.discountValue || (match ? parseFloat(match[1]) : 0);
+      discountAmount = Math.min(fixedVal, subtotal);
+    }
+  }
+
+  const finalDeliveryCharge = isFreeShippingApplied ? 0 : deliveryCharge;
+  const total = Math.max(0, subtotal - discountAmount + finalDeliveryCharge);
+
+  // Apply Coupon handler
+  const handleApplyCoupon = (codeOverride?: string) => {
+    const code = (codeOverride || couponInput).trim().toUpperCase();
+    setCouponError('');
+    setCouponSuccess('');
+
+    if (!code) {
+      setCouponError('অনুগ্রহ করে একটি কুপন বা প্রোমো কোড লিখুন।');
+      return;
+    }
+
+    const found = availableCoupons.find(c => c.code.toUpperCase() === code);
+    if (!found) {
+      setCouponError(`"${code}" কুপনটি পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।`);
+      return;
+    }
+
+    if (found.status === 'Expired') {
+      setCouponError(`"${code}" কুপনটির মেয়াদ শেষ হয়ে গেছে।`);
+      return;
+    }
+
+    const minSpend = found.minSpend || 0;
+    if (subtotal < minSpend) {
+      setCouponError(`এই কুপন ব্যবহারের জন্য সর্বনিম্ন ৳${minSpend} এর অর্ডার প্রয়োজন। (আপনার সাবটোটাল ৳${subtotal.toFixed(2)})`);
+      return;
+    }
+
+    setAppliedCoupon(found);
+    setCouponInput(code);
+    setCouponSuccess(`"${code}" কুপন সফলভাবে প্রয়োগ হয়েছে!`);
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponInput('');
+    setCouponError('');
+    setCouponSuccess('');
+  };
 
   const bkashNum = storeSettings?.bkashNumber || '01712-345678';
   const bkashType = storeSettings?.bkashType || 'Personal';
@@ -259,6 +362,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       ? `🌟 *নতুন গ্রাহকের প্রথম অর্ডার! (First Order on Website)*\n`
       : `🛍️ *নতুন অর্ডার নোটিফিকেশন — হিমায়া ফ্যাশন*\n`;
 
+    const discountText = (order.discountAmount && order.discountAmount > 0)
+      ? `🎟️ *কুপন ডিসকাউন্ট (${order.couponCode || 'PROMO'}):* -৳${order.discountAmount.toFixed(2)}\n`
+      : '';
+
     return `🔔 ${header}━━━━━━━━━━━━━━━━━━━━
 📦 *অর্ডার আইডি:* #${order.id}
 📅 *অর্ডারের সময়:* ${orderTime}
@@ -277,8 +384,8 @@ ${order.email ? `• ইমেইল: ${order.email}\n` : ''}📍 *ডেলি�
 ${itemsList}
 ━━━━━━━━━━━━━━━━━━━━
 💳 *পেমেন্ট পদ্ধতি:* ${paymentText}
-💰 *পণ্যের মোট মূল্য:* ৳${(order.totalAmount - (order.deliveryCharge || 0)).toFixed(2)}
-🚚 *ডেলিভারি চার্জ:* ৳${(order.deliveryCharge || 0).toFixed(2)}
+💰 *পণ্যের মোট মূল্য:* ৳${(order.totalAmount - (order.deliveryCharge || 0) + (order.discountAmount || 0)).toFixed(2)}
+${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deliveryCharge || 0).toFixed(2)}
 ✨ *সর্বমোট প্রদেয় টাকা:* ৳${order.totalAmount.toFixed(2)}
 ━━━━━━━━━━━━━━━━━━━━
 *হিমায়া ফ্যাশন (Himaya Fashion)*`;
@@ -350,6 +457,8 @@ ${itemsList}
         image: i.selectedImage || i.product.image
       })),
       totalAmount: total,
+      couponCode: appliedCoupon?.code || undefined,
+      discountAmount: discountAmount > 0 ? discountAmount : undefined,
       status: 'Pending',
       createdAt: new Date().toISOString(),
       paymentMethod: formData.paymentMethod,
@@ -773,6 +882,12 @@ ${itemsList}
                     <span className="font-mono font-bold text-pink-600">{completedOrder.paymentTrxId}</span>
                   </div>
                 )}
+                {completedOrder.couponCode && completedOrder.discountAmount && (
+                  <div className="flex justify-between text-emerald-700 font-medium">
+                    <span>Coupon Discount ({completedOrder.couponCode}):</span>
+                    <span className="font-bold">-৳{completedOrder.discountAmount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between pt-2 border-t border-[#E6E2DD]">
                   <span className="text-[#1A1A1A] font-bold">Total Amount Payable:</span>
                   <span className="font-bold text-sm text-[#C5A059]">৳{completedOrder.totalAmount.toFixed(2)}</span>
@@ -819,14 +934,134 @@ ${itemsList}
                   ))}
                 </div>
 
+                {/* Promo Code / Coupon Section */}
+                <div className="pt-2 border-b border-[#E6E2DD] pb-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#1A1A1A] flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-[#C5A059]" />
+                      <span>Have a Promo Code? (কুপন বা প্রোমো কোড)</span>
+                    </span>
+                    {appliedCoupon && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        <span>{appliedCoupon.code} Applied</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {!appliedCoupon ? (
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={couponInput}
+                          onChange={e => {
+                            setCouponInput(e.target.value.toUpperCase());
+                            setCouponError('');
+                            setCouponSuccess('');
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleApplyCoupon();
+                            }
+                          }}
+                          placeholder="e.g. EID2026, WELCOME10, FREESHIP"
+                          className="w-full px-3 py-2 text-xs font-mono uppercase bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059] focus:border-[#C5A059]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyCoupon()}
+                        disabled={!couponInput.trim()}
+                        className="px-4 py-2 bg-[#1A1A1A] hover:bg-[#C5A059] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer shrink-0"
+                      >
+                        Apply (প্রয়োগ)
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl p-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
+                          %
+                        </span>
+                        <div className="text-xs min-w-0">
+                          <div className="font-bold text-emerald-950 flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono">{appliedCoupon.code}</span>
+                            <span className="text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.2 rounded font-semibold">
+                              {appliedCoupon.displayDiscount || appliedCoupon.discount}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-emerald-700 mt-0.5">
+                            মোট ছাড়: <strong>৳{discountAmount.toFixed(2)}</strong> {isFreeShippingApplied && '(ফ্রি শিপিং)'}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRemoveCoupon}
+                        className="p-1 text-slate-400 hover:text-red-600 rounded-lg hover:bg-white transition-colors cursor-pointer"
+                        title="Remove coupon"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {couponError && (
+                    <p className="text-[11px] text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 shrink-0" />
+                      <span>{couponError}</span>
+                    </p>
+                  )}
+
+                  {couponSuccess && !couponError && (
+                    <p className="text-[11px] text-emerald-700 flex items-center gap-1">
+                      <Check className="w-3 h-3 shrink-0 text-emerald-600" />
+                      <span>{couponSuccess}</span>
+                    </p>
+                  )}
+
+                  {/* Suggestion tags if not applied */}
+                  {!appliedCoupon && availableCoupons.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      <span className="text-[10px] text-slate-500 font-medium">অফারসমূহ:</span>
+                      {availableCoupons.slice(0, 4).map(c => (
+                        <button
+                          key={c.id || c.code}
+                          type="button"
+                          onClick={() => handleApplyCoupon(c.code)}
+                          className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-all cursor-pointer"
+                        >
+                          <Ticket className="w-2.5 h-2.5 text-amber-600" />
+                          <span>{c.code} ({c.discount || c.displayDiscount})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1.5 text-xs">
                   <div className="flex justify-between text-[#666]">
                     <span>Products Subtotal</span>
                     <span className="font-semibold text-[#1A1A1A]">৳{subtotal.toFixed(2)}</span>
                   </div>
+
+                  {discountAmount > 0 && appliedCoupon && (
+                    <div className="flex justify-between text-emerald-700 font-medium">
+                      <span className="flex items-center gap-1">
+                        <Tag className="w-3 h-3 text-emerald-600" />
+                        <span>Promo Discount ({appliedCoupon.code})</span>
+                      </span>
+                      <span className="font-bold">-৳{discountAmount.toFixed(2)}</span>
+                    </div>
+                  )}
+
                   <div className="flex justify-between text-[#666]">
                     <span>Delivery Charge ({deliveryArea})</span>
-                    <span className="font-semibold text-emerald-700">+৳{deliveryCharge.toFixed(2)}</span>
+                    <span className={`font-semibold ${isFreeShippingApplied ? 'line-through text-slate-400' : 'text-emerald-700'}`}>
+                      {isFreeShippingApplied ? '৳0.00 (Free)' : `+৳${deliveryCharge.toFixed(2)}`}
+                    </span>
                   </div>
                   <div className="flex justify-between text-xs font-bold text-[#1A1A1A] pt-2 border-t border-[#E6E2DD]">
                     <span>Total Payable</span>

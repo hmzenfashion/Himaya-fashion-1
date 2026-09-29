@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, CartItem, BannerAd, Order, StoreSettings, AdConfiguration } from './types';
+import { Product, CartItem, BannerAd, Order, StoreSettings, AdConfiguration, CouponItem } from './types';
 import { initialProducts, initialBanners, initialAdConfig } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -15,6 +15,7 @@ import { InstallAppModal } from './components/InstallAppModal';
 import { Footer } from './components/Footer';
 import { FloatingSocialButtons } from './components/FloatingSocialButtons';
 import { AdManager } from './components/AdManager';
+import { PopularProductsSection } from './components/PopularProductsSection';
 import { Sparkles, SlidersHorizontal, Heart, X, Database } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -23,11 +24,13 @@ import {
   subscribeToBanners,
   subscribeToStoreSettings,
   subscribeToAdConfig,
+  subscribeToCoupons,
   fetchProductsFromFirestore,
   fetchOrdersFromFirestore,
   fetchBannersFromFirestore,
   fetchStoreSettings,
   fetchAdConfig,
+  fetchCouponsFromFirestore,
   saveAdConfig,
   seedProductsIfEmpty,
   seedBannersIfEmpty,
@@ -42,7 +45,14 @@ import {
   CustomerUser,
   getStoredCustomer,
   clearStoredCustomer,
-  getStoredCustomProducts
+  getStoredCustomProducts,
+  getStoredProducts,
+  saveStoredProducts,
+  getStoredBanners,
+  getStoredOrders,
+  isQuotaExhausted,
+  recordQuotaExceeded,
+  isDemoProduct
 } from './firebase';
 
 export const sanitizeProduct = (p: any): Product => {
@@ -100,6 +110,24 @@ export default function App() {
   const [adminEmails, setAdminEmails] = useState<string[]>(DEFAULT_ADMIN_EMAILS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
+  // Coupons state
+  const [coupons, setCoupons] = useState<CouponItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      { id: 'c1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', minSpend: 1000, status: 'Active' },
+      { id: 'c2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', minSpend: 500, status: 'Active' },
+      { id: 'c3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 150, displayDiscount: 'Free Shipping', minSpend: 1500, status: 'Active' },
+      { id: 'c4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', minSpend: 800, status: 'Active' },
+      { id: 'c5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', minSpend: 2000, status: 'Active' },
+    ];
+  });
+
   // Cart & Wishlist state
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<Product[]>([]);
@@ -123,32 +151,19 @@ export default function App() {
 
   const fetchData = async () => {
     try {
-      let firestoreFetched = false;
-      // 1. Fetch directly from Firebase Firestore
-      try {
-        const [fbProds, fbOrders, fbBans, fbSets, fbEmails, fbAds] = await Promise.all([
-          fetchProductsFromFirestore(),
-          fetchOrdersFromFirestore(),
-          fetchBannersFromFirestore(),
-          fetchStoreSettings(),
-          fetchAdminEmails(),
-          fetchAdConfig().catch(() => null)
-        ]);
-        if (fbProds) {
-          setProducts(fbProds.map(sanitizeProduct));
-          firestoreFetched = true;
-        }
-        if (fbOrders) setOrders(fbOrders);
-        if (fbBans) setBanners(fbBans);
-        if (fbSets) setStoreSettings(fbSets);
-        if (fbEmails && fbEmails.length > 0) setAdminEmails(fbEmails);
-        if (fbAds) setAdConfig(fbAds);
-      } catch (fbErr) {
-        console.warn("Firestore direct query error during fetch:", fbErr);
+      // 1. Instantly populate UI from local high-speed cache
+      const cachedProds = getStoredProducts().filter(p => !isDemoProduct(p));
+      if (cachedProds.length > 0) {
+        setProducts(cachedProds.map(sanitizeProduct));
+        setLoading(false);
       }
+      const cachedBans = getStoredBanners();
+      if (cachedBans && cachedBans.length > 0) setBanners(cachedBans);
+      const cachedOrds = getStoredOrders();
+      if (cachedOrds && cachedOrds.length > 0) setOrders(cachedOrds);
 
-      // 2. Only fetch API fallback/cache if Firestore was not available
-      if (!firestoreFetched) {
+      // 2. Fetch from Express Backend API (costs ZERO Firestore read units)
+      try {
         const [prodRes, bannerRes, orderRes, settingsRes, adsRes] = await Promise.all([
           fetch('/api/products').catch(() => null),
           fetch('/api/banners').catch(() => null),
@@ -156,13 +171,20 @@ export default function App() {
           fetch('/api/settings').catch(() => null),
           fetch('/api/ads').catch(() => null)
         ]);
+
         if (prodRes && prodRes.ok) {
           const prodData = await prodRes.json().catch(() => null);
-          if (Array.isArray(prodData)) setProducts(prodData.map(sanitizeProduct));
+          if (Array.isArray(prodData) && prodData.length > 0) {
+            const clean = prodData.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+            if (clean.length > 0) {
+              setProducts(clean);
+              saveStoredProducts(clean);
+            }
+          }
         }
         if (bannerRes && bannerRes.ok) {
           const bannerData = await bannerRes.json().catch(() => null);
-          if (Array.isArray(bannerData)) setBanners(bannerData);
+          if (Array.isArray(bannerData) && bannerData.length > 0) setBanners(bannerData);
         }
         if (orderRes && orderRes.ok) {
           const orderData = await orderRes.json().catch(() => null);
@@ -176,22 +198,38 @@ export default function App() {
           const adsData = await adsRes.json().catch(() => null);
           if (adsData) setAdConfig(adsData);
         }
+      } catch {
+        // ignore
       }
 
-      // Guarantee fallback products: prioritize local custom products (added via admin panel), otherwise initial products
-      setProducts(prev => {
-        const localCustom = getStoredCustomProducts();
-        if (localCustom && localCustom.length > 0) {
-          return localCustom.map(sanitizeProduct);
+      // 3. Only query Cloud Firestore if quota is NOT exhausted
+      if (!isQuotaExhausted()) {
+        try {
+          const [fbProds, fbOrders, fbBans, fbSets, fbEmails, fbAds, fbCoupons] = await Promise.all([
+            fetchProductsFromFirestore(),
+            fetchOrdersFromFirestore(),
+            fetchBannersFromFirestore(),
+            fetchStoreSettings(),
+            fetchAdminEmails(),
+            fetchAdConfig().catch(() => null),
+            fetchCouponsFromFirestore().catch(() => [])
+          ]);
+          if (fbProds && fbProds.length > 0) {
+            const cleanProds = fbProds.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+            if (cleanProds.length > 0) setProducts(cleanProds);
+          }
+          if (fbOrders) setOrders(fbOrders);
+          if (fbBans) setBanners(fbBans);
+          if (fbSets) setStoreSettings(fbSets);
+          if (fbEmails && fbEmails.length > 0) setAdminEmails(fbEmails);
+          if (fbAds) setAdConfig(fbAds);
+          if (fbCoupons && fbCoupons.length > 0) setCoupons(fbCoupons);
+        } catch (fbErr) {
+          recordQuotaExceeded(fbErr);
         }
-        if (prev && prev.length > 0) {
-          return prev.map(sanitizeProduct);
-        }
-        return initialProducts.map(sanitizeProduct);
-      });
-      setBanners(prev => (prev && prev.length > 0 ? prev : initialBanners));
+      }
     } catch (err) {
-      console.error("Failed to fetch data fallback", err);
+      // ignore
     } finally {
       setLoading(false);
     }
@@ -203,6 +241,7 @@ export default function App() {
     let unsubBanners: (() => void) | null = null;
     let unsubSettings: (() => void) | null = null;
     let unsubAds: (() => void) | null = null;
+    let unsubCoupons: (() => void) | null = null;
     let unsubAuth: (() => void) | null = null;
 
     // 1. Initial quick load from local cache/API
@@ -240,15 +279,14 @@ export default function App() {
         await testConnection();
         setIsFirebaseSyncActive(true);
 
-        // Ensure database has default items if empty
-        await seedProductsIfEmpty();
-        await seedBannersIfEmpty();
-
         // Subscribe to real-time changes
         unsubProducts = subscribeToProducts((prods) => {
-          if (prods) {
-            setProducts(prods.map(sanitizeProduct));
-            setLoading(false);
+          if (prods && prods.length > 0) {
+            const clean = prods.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+            if (clean.length > 0) {
+              setProducts(clean);
+              setLoading(false);
+            }
           }
         });
 
@@ -275,6 +313,15 @@ export default function App() {
             setAdConfig(conf);
           }
         });
+
+        unsubCoupons = subscribeToCoupons((cps) => {
+          if (cps && cps.length > 0) {
+            setCoupons(cps);
+            try {
+              localStorage.setItem('himaya_coupons', JSON.stringify(cps));
+            } catch {}
+          }
+        });
       } catch (err) {
         console.warn("Firestore listener initialization note:", err);
       }
@@ -288,6 +335,7 @@ export default function App() {
       if (unsubBanners) unsubBanners();
       if (unsubSettings) unsubSettings();
       if (unsubAds) unsubAds();
+      if (unsubCoupons) unsubCoupons();
       if (unsubAuth) unsubAuth();
     };
   }, []);
@@ -453,8 +501,21 @@ export default function App() {
     });
   };
 
-  // Filtered & sorted products
-  const filteredProducts = (products || []).filter(p => {
+  // Helper to identify products pinned from admin panel
+  const isPinnedProduct = (p: Product) => Boolean(
+    p.isPinned || 
+    p.isPopular || 
+    (p.badge && (p.badge.toLowerCase().includes('pinned') || p.badge.toLowerCase().includes('popular') || p.badge.toLowerCase().includes('pin') || p.badge.toLowerCase().includes('print')))
+  );
+
+  // Dedicated section at the top: Pinned products from admin panel
+  const pinnedProducts = (products || []).filter(p => !isDemoProduct(p) && isPinnedProduct(p));
+
+  // Below the pinned section, ensure the full list of all real products is correctly displayed
+  const allRealProducts = (products || []).filter(p => !isDemoProduct(p));
+
+  // Filtered & sorted products for the main catalog
+  const filteredProducts = allRealProducts.filter(p => {
     if (!p) return false;
     const title = (p.title || '').toLowerCase();
     const desc = (p.description || '').toLowerCase();
@@ -510,7 +571,19 @@ export default function App() {
         appButtonText={storeSettings?.appButtonText || "Download apps"}
       />
 
-      {/* Main Product Catalog Section */}
+      {/* Dedicated Pinned Products Section at the top (Pinned from Admin Panel) */}
+      {pinnedProducts.length > 0 && (
+        <PopularProductsSection
+          products={pinnedProducts}
+          onSelectProduct={handleSelectProduct}
+          onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
+          onDirectCheckout={(p, s, c) => handleDirectCheckout(p, s, c, 1)}
+          wishlist={wishlist}
+          onToggleWishlist={handleToggleWishlist}
+        />
+      )}
+
+      {/* Main Product Catalog Section: Full list of all real products displayed below the pinned section */}
       <main id="product-grid" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 w-full space-y-8">
         
         {/* Section Header & Filters */}
@@ -690,6 +763,7 @@ export default function App() {
           cartItems={cartItems}
           storeSettings={storeSettings}
           currentUser={activeCustomer}
+          coupons={coupons}
           onCustomerAuthSuccess={(cust) => setCustomerUser(cust)}
           onSignOutCustomer={handleSignOut}
           onOrderSuccess={(order) => {
@@ -717,6 +791,8 @@ export default function App() {
           banners={banners}
           orders={orders}
           storeSettings={storeSettings}
+          coupons={coupons}
+          onUpdateCoupons={(updated) => setCoupons(updated)}
           onUpdateStoreSettings={(newSettings) => setStoreSettings(newSettings)}
           onUpdateBanners={(newBanners) => setBanners(newBanners)}
           onDeleteProduct={(prodId) => setProducts(prev => prev.filter(p => p.id !== prodId))}

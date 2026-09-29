@@ -64,6 +64,8 @@ import {
   deleteBannerFromFirestore,
   saveStoreSettings,
   saveAdConfig,
+  saveCouponToFirestore,
+  deleteCouponFromFirestore,
   DEFAULT_ADMIN_EMAILS
 } from '../firebase';
 import { initialAdConfig } from '../data/initialData';
@@ -584,6 +586,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   products,
   banners = [],
   orders,
+  coupons: initialCoupons = [],
+  onUpdateCoupons,
   onRefreshData,
   onOpenFirebaseGuide,
   currentUser,
@@ -1171,8 +1175,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setDiscountPercentInput(String(percentage));
   };
 
-  // Coupons state (persisted in local storage)
+  // Coupons state (persisted in local storage & Firestore)
   const [coupons, setCoupons] = useState<CouponItem[]>(() => {
+    if (initialCoupons && initialCoupons.length > 0) return initialCoupons;
     try {
       const saved = localStorage.getItem('himaya_coupons');
       if (saved) {
@@ -1184,9 +1189,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       { id: '1', code: 'EID2026', discount: '20% OFF', minSpend: 1000, status: 'Active' },
       { id: '2', code: 'WELCOME10', discount: '10% OFF', minSpend: 500, status: 'Active' },
       { id: '3', code: 'FREESHIP', discount: 'Free Shipping', minSpend: 1500, status: 'Active' },
-      { id: '4', code: 'BDSHOPVIP', discount: '৳250 OFF', minSpend: 2000, status: 'Active' },
+      { id: '4', code: 'HIMAYA100', discount: '৳100 OFF', minSpend: 800, status: 'Active' },
+      { id: '5', code: 'BDSHOPVIP', discount: '৳250 OFF', minSpend: 2000, status: 'Active' },
     ];
   });
+
+  useEffect(() => {
+    if (initialCoupons && initialCoupons.length > 0) {
+      setCoupons(initialCoupons);
+    }
+  }, [initialCoupons]);
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponDiscount, setNewCouponDiscount] = useState('');
   const [newCouponMinSpend, setNewCouponMinSpend] = useState('500');
@@ -1421,8 +1433,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         body: JSON.stringify(updatedProduct)
       }).catch(() => {});
       setToastMessage(newPinned 
-        ? `📌 "${product.title}" জনপ্রিয় পণ্য হিসেবে পিন করা হয়েছে!` 
-        : `"${product.title}" আন-পিন করা হয়েছে।`);
+        ? `📌 "${product.title}" 'Most Popular' (প্রিন্ট/পিন) হিসেবে শীর্ষে প্রদর্শনের জন্য সেট করা হয়েছে!` 
+        : `"${product.title}" কে 'Most Popular' থেকে সরানো হয়েছে।`);
       onRefreshData();
     } catch (err) {
       console.warn("Toggle pin warning:", err);
@@ -1496,9 +1508,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       } else if (type === 'coupon') {
         const updatedCoupons = coupons.filter(c => c.id !== id);
         setCoupons(updatedCoupons);
+        onUpdateCoupons?.(updatedCoupons);
         try {
           localStorage.setItem('himaya_coupons', JSON.stringify(updatedCoupons));
         } catch {}
+        deleteCouponFromFirestore(id);
         setToastMessage(`কুপন/ভাউচার "${title}" সফলভাবে ডিলিট করা হয়েছে!`);
       } else if (type === 'category') {
         const updatedCustom = customCategories.filter(c => c !== id);
@@ -1653,9 +1667,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
     const updated = [newCoupon, ...coupons];
     setCoupons(updated);
+    onUpdateCoupons?.(updated);
     try {
       localStorage.setItem('himaya_coupons', JSON.stringify(updated));
     } catch {}
+    saveCouponToFirestore(newCoupon);
     setNewCouponCode('');
     setNewCouponDiscount('');
     setToastMessage(`নতুন কুপন "${newCoupon.code}" সফলভাবে তৈরি করা হয়েছে!`);
@@ -1668,9 +1684,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         : c
     );
     setCoupons(updated);
+    onUpdateCoupons?.(updated);
     try {
       localStorage.setItem('himaya_coupons', JSON.stringify(updated));
     } catch {}
+    const toggled = updated.find(c => c.id === couponId);
+    if (toggled) saveCouponToFirestore(toggled);
     setToastMessage('কুপন স্ট্যাটাস পরিবর্তন করা হয়েছে!');
   };
 
@@ -3150,11 +3169,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               </div>
                               <div>
                                 <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                                  <span>Pin as Popular Product (জনপ্রিয় পণ্য হিসেবে পিন করুন)</span>
-                                  <span className="text-[9px] font-extrabold bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">Top 10 Shelf</span>
+                                  <span>Flag as Print / Most Popular (শীর্ষে 'Most Popular' হিসেবে প্রিন্ট/পিন করুন)</span>
+                                  <span className="text-[9px] font-extrabold bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">Top Section</span>
                                 </div>
                                 <div className="text-[10px] text-amber-800/80 mt-0.5">
-                                  পিন করা পণ্যগুলো ওয়েবসাইটের উপরে "Top 10 Popular Products" তালিকায় সবার আগে প্রদর্শিত হবে।
+                                  এই অপশনটি চালু করলে পণ্যটি ওয়েবসাইটের শীর্ষে "Most Popular" সেকশনে পাশাপাশি প্রদর্শিত হবে।
                                 </div>
                               </div>
                             </div>
@@ -3284,14 +3303,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => handleTogglePinProduct(p)}
-                                      className={`p-2 rounded-lg transition-colors cursor-pointer ${
+                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                                         p.isPinned 
                                           ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm' 
-                                          : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                          : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
                                       }`}
-                                      title={p.isPinned ? "📌 পিন করা আছে (জনপ্রিয় পণ্য) - আন-পিন করতে ক্লিক করুন" : "📌 জনপ্রিয় পণ্য হিসেবে পিন করুন (Pin to Top 10 Popular)"}
+                                      title={p.isPinned ? "📌 'Most Popular' (প্রিন্ট/পিন) সক্রিয় আছে — আন-পিন করতে ক্লিক করুন" : "📌 'Most Popular' (প্রিন্ট/পিন) হিসেবে শীর্ষে পাশাপাশি প্রদর্শন করতে ক্লিক করুন"}
                                     >
                                       <Pin className={`w-3.5 h-3.5 ${p.isPinned ? 'fill-current' : ''}`} />
+                                      <span>{p.isPinned ? 'Print / Popular' : 'Print / Pin'}</span>
                                     </button>
                                     <button
                                       type="button"

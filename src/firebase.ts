@@ -10,7 +10,7 @@ import {
   User
 } from 'firebase/auth';
 import {
-  getFirestore,
+  initializeFirestore,
   doc,
   getDocFromServer,
   collection,
@@ -22,22 +22,68 @@ import {
   onSnapshot,
   query,
   orderBy,
-  Unsubscribe
+  Unsubscribe,
+  setLogLevel
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Product, Order, BannerAd, StoreSettings, AdConfiguration } from './types';
-import { initialProducts, initialBanners } from './data/initialData';
+import { initialBanners } from './data/initialData';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// CRITICAL: Must provide firestoreDatabaseId
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Silence internal SDK debug transport messages (WebChannel reconnects, etc.)
+try {
+  setLogLevel('silent');
+} catch {
+  // ignore
+}
+
+// CRITICAL: Initialize Firestore with experimentalForceLongPolling and optimal timeout to prevent WebSocket / WebChannel transport errors in iframe sandbox
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  experimentalLongPollingOptions: {
+    timeoutSeconds: 20
+  }
+}, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Authorized Admin Emails - Primary admin is mhemal136@gmail.com
 export const DEFAULT_ADMIN_EMAILS = ['mhemal136@gmail.com'];
+
+// Helper to identify and reject any demo/sample products
+export function isDemoProduct(product: any): boolean {
+  if (!product) return true;
+  const id = String(product.id || '').trim();
+  const title = String(product.title || '').trim().toLowerCase();
+
+  // Explicit demo product IDs
+  if (['prod-1', 'prod-2', 'prod-3', 'prod-4', 'prod-5', 'prod-6'].includes(id)) return true;
+  if (id.startsWith('prod-georgette-')) return true;
+
+  // Explicit demo product titles
+  const demoSubstrings = [
+    'elysian cashmere',
+    'serenade silk',
+    'milano tailored',
+    'aurum pleated',
+    'vanguard ribbed',
+    'sovereign leather',
+    'royal crimson jamdani',
+    'emerald silk katan',
+    'zardozi bridal lehenga',
+    'classic executive men',
+    'luxury velvet three-piece',
+    'premium georgette three-piece (প্রিমিয়াম জর্জেট থ্রি-পিস - ১)',
+    'designer georgette party three-piece (ডিজাইনার জর্জেট থ্রি-পিস - ২)',
+    'embroidered georgette salwar kameez (স্টোন ওয়ার্ক জর্জেট থ্রি-পিস - ৩)'
+  ];
+
+  if (demoSubstrings.some(sub => title.includes(sub))) return true;
+
+  return false;
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -65,9 +111,87 @@ export interface FirestoreErrorInfo {
   };
 }
 
+// --- High-Speed Quota Circuit Breaker & Stale-While-Revalidate Engine ---
+let isQuotaExceededMemory = false;
+let quotaExceededTime = 0;
+const QUOTA_COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes cooldown before trying remote read again
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL for public inventory/banners
+
+export function isQuotaExhausted(): boolean {
+  if (isQuotaExceededMemory) {
+    if (Date.now() - quotaExceededTime < QUOTA_COOLDOWN_MS) {
+      return true;
+    }
+    isQuotaExceededMemory = false;
+    try { localStorage.removeItem('himaya_firestore_quota_exhausted'); } catch {}
+  } else {
+    try {
+      const stored = localStorage.getItem('himaya_firestore_quota_exhausted');
+      if (stored) {
+        const time = Number(stored);
+        if (Date.now() - time < QUOTA_COOLDOWN_MS) {
+          isQuotaExceededMemory = true;
+          quotaExceededTime = time;
+          return true;
+        } else {
+          localStorage.removeItem('himaya_firestore_quota_exhausted');
+        }
+      }
+    } catch {}
+  }
+  return false;
+}
+
+let hasLoggedQuotaNotice = false;
+
+export function recordQuotaExceeded(err?: unknown): void {
+  const errMsg = err instanceof Error ? err.message : String(err || '');
+  const isQuota = errMsg.includes('quota') || 
+                  errMsg.includes('resource-exhausted') || 
+                  errMsg.includes('Quota exceeded') ||
+                  errMsg.includes('RESOURCE_EXHAUSTED');
+  
+  if (isQuota || !err) {
+    isQuotaExceededMemory = true;
+    quotaExceededTime = Date.now();
+    try {
+      localStorage.setItem('himaya_firestore_quota_exhausted', String(Date.now()));
+    } catch {}
+
+    if (!hasLoggedQuotaNotice) {
+      hasLoggedQuotaNotice = true;
+      console.info(
+        "%c[Firestore Free Tier Notice]%c Daily free read quota (50,000 reads/day) reached. Serving all live inventory, settings & banners from local high-speed cache & backend API. Database write operations remain active.",
+        "background: #C5A059; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold;",
+        "color: #555; padding-left: 4px;"
+      );
+    }
+  }
+}
+
+export function isCacheFresh(key: string): boolean {
+  try {
+    const ts = localStorage.getItem(`himaya_cache_ts_${key}`);
+    if (ts && Date.now() - Number(ts) < CACHE_TTL_MS) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+export function markCacheFresh(key: string): void {
+  try {
+    localStorage.setItem(`himaya_cache_ts_${key}`, String(Date.now()));
+  } catch {}
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  if (errMsg.includes('quota') || errMsg.includes('resource-exhausted') || errMsg.includes('Quota exceeded')) {
+    recordQuotaExceeded(error);
+  }
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -82,21 +206,27 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Error:', JSON.stringify(errInfo));
+  // Only log detailed errors if it's not a quota limit exhaustion
+  if (!errMsg.includes('quota') && !errMsg.includes('resource-exhausted')) {
+    console.error('Firestore Error:', JSON.stringify(errInfo));
+  }
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Connection test on boot
+// Connection test on boot (Optimized: skips network hit if quota is exhausted or tested recently)
 export async function testConnection(): Promise<boolean> {
+  if (isQuotaExhausted()) return true;
+  if (isCacheFresh('connection_test')) return true;
+
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firebase Firestore connected successfully!");
+    await getDocFromServer(doc(db, 'settings', 'store_configuration'));
+    markCacheFresh('connection_test');
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration: client is offline.");
-    } else {
-      console.log("Firebase connection ping completed.");
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (errMsg.includes('quota') || errMsg.includes('resource-exhausted')) {
+      recordQuotaExceeded(error);
+      return true;
     }
     return false;
   }
@@ -117,17 +247,18 @@ export function getStoredProducts(): Product[] {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length >= 6) {
-        // Ensure initialProducts are included if not present
-        const existingIds = new Set(parsed.map(p => p.id));
-        const missingInitial = initialProducts.filter(p => !existingIds.has(p.id));
-        return [...missingInitial, ...parsed];
+      if (Array.isArray(parsed)) {
+        const clean = parsed.filter(p => !isDemoProduct(p));
+        if (clean.length !== parsed.length) {
+          saveStoredProducts(clean);
+        }
+        return clean;
       }
     }
   } catch (e) {
     // ignore
   }
-  return initialProducts;
+  return [];
 }
 
 export function getStoredCustomProducts(): Product[] {
@@ -140,37 +271,100 @@ export function saveStoredCustomProducts(items: Product[]): void {
 
 export function saveStoredProducts(items: Product[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(items));
+    const clean = (items || []).filter(p => !isDemoProduct(p));
+    localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(clean));
   } catch (e) {
     // ignore
   }
 }
 
 export async function fetchCouponsFromFirestore(): Promise<any[]> {
+  const getFallbackCoupons = () => {
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      { id: '1', code: 'EID2026', discount: '20% OFF', minSpend: 1000, status: 'Active' },
+      { id: '2', code: 'WELCOME10', discount: '10% OFF', minSpend: 500, status: 'Active' },
+      { id: '3', code: 'FREESHIP', discount: 'Free Shipping', minSpend: 1500, status: 'Active' },
+      { id: '4', code: 'HIMAYA100', discount: '৳100 OFF', minSpend: 800, status: 'Active' },
+      { id: '5', code: 'BDSHOPVIP', discount: '৳250 OFF', minSpend: 2000, status: 'Active' },
+    ];
+  };
+
+  if (isQuotaExhausted() || isCacheFresh('coupons')) {
+    return getFallbackCoupons();
+  }
+
   try {
     const snap = await getDocs(collection(db, 'coupons'));
     const items: any[] = [];
     snap.forEach(docSnap => {
       items.push({ ...docSnap.data(), id: docSnap.id });
     });
-    return items;
-  } catch {
-    return [];
+    if (items.length > 0) {
+      markCacheFresh('coupons');
+      try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
+      return items;
+    }
+  } catch (err) {
+    recordQuotaExceeded(err);
   }
+  return getFallbackCoupons();
 }
 
 export function subscribeToCoupons(onUpdate: (coupons: any[]) => void): Unsubscribe {
-  return onSnapshot(
-    collection(db, 'coupons'),
-    (snapshot) => {
-      const items: any[] = [];
-      snapshot.forEach(docSnap => {
-        items.push({ ...docSnap.data(), id: docSnap.id });
-      });
-      onUpdate(items);
-    },
-    () => {}
-  );
+  // Always supply local/fallback coupons immediately
+  try {
+    const saved = localStorage.getItem('himaya_coupons');
+    if (saved) onUpdate(JSON.parse(saved));
+  } catch {}
+
+  if (isQuotaExhausted()) return () => {};
+
+  try {
+    return onSnapshot(
+      collection(db, 'coupons'),
+      (snapshot) => {
+        const items: any[] = [];
+        snapshot.forEach(docSnap => {
+          items.push({ ...docSnap.data(), id: docSnap.id });
+        });
+        if (items.length > 0) {
+          markCacheFresh('coupons');
+          try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
+          onUpdate(items);
+        }
+      },
+      (err) => {
+        recordQuotaExceeded(err);
+      }
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
+}
+
+export async function saveCouponToFirestore(coupon: any): Promise<void> {
+  try {
+    const couponId = String(coupon.id || coupon.code).trim();
+    await setDoc(doc(db, 'coupons', couponId), coupon, { merge: true });
+  } catch (err) {
+    recordQuotaExceeded(err);
+  }
+}
+
+export async function deleteCouponFromFirestore(couponId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'coupons', couponId));
+  } catch (err) {
+    recordQuotaExceeded(err);
+  }
 }
 
 export function getStoredOrders(): Order[] {
@@ -215,24 +409,10 @@ export function saveStoredBanners(items: BannerAd[]): void {
   }
 }
 
-// Automatically test connection when module loads
-testConnection();
-
 // --- Firestore CRUD for Products ---
 
 export async function seedProductsIfEmpty(): Promise<void> {
-  try {
-    const snap = await getDocs(collection(db, 'products'));
-    if (snap.empty) {
-      console.log("Seeding initial products to Firebase Firestore...");
-      for (const prod of initialProducts) {
-        await setDoc(doc(db, 'products', prod.id), prod);
-      }
-      console.log("Firestore products seeded successfully!");
-    }
-  } catch (error) {
-    console.warn("Seed products note (quota or offline): Using local cache.");
-  }
+  // Disabled demo seeding to strictly protect user's real products.
 }
 
 export async function seedBannersIfEmpty(): Promise<void> {
@@ -252,53 +432,71 @@ export function subscribeToProducts(
   onUpdate: (products: Product[]) => void,
   onError?: (err: unknown) => void
 ): Unsubscribe {
-  // Immediately provide cached local products
-  const localProds = getStoredProducts();
-  onUpdate(localProds);
+  const localProds = getStoredProducts().filter(p => !isDemoProduct(p));
+  if (localProds.length > 0) {
+    onUpdate(localProds);
+  }
+
+  if (isQuotaExhausted()) return () => {};
 
   const path = 'products';
-  return onSnapshot(
-    collection(db, path),
-    (snapshot) => {
-      const items: Product[] = [];
-      snapshot.forEach(docSnap => {
-        items.push({ ...docSnap.data(), id: docSnap.id } as Product);
-      });
-      if (items.length > 0) {
-        // Merge with any local-only products not yet in remote
-        const currentLocal = getStoredProducts();
-        const remoteIds = new Set(items.map(p => p.id));
-        const localOnly = currentLocal.filter(p => !remoteIds.has(p.id));
-        const combined = [...items, ...localOnly];
-
-        combined.sort((a, b) => {
-          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
-          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
-          return timeB - timeA;
+  try {
+    return onSnapshot(
+      collection(db, path),
+      (snapshot) => {
+        const items: Product[] = [];
+        snapshot.forEach(docSnap => {
+          const p = { ...docSnap.data(), id: docSnap.id } as Product;
+          if (!isDemoProduct(p)) {
+            items.push(p);
+          }
         });
-        saveStoredProducts(combined);
-        onUpdate(combined);
+        if (items.length > 0) {
+          const currentLocal = getStoredProducts().filter(p => !isDemoProduct(p));
+          const remoteIds = new Set(items.map(p => p.id));
+          const localOnly = currentLocal.filter(p => !remoteIds.has(p.id) && !isDemoProduct(p));
+          const combined = [...items, ...localOnly];
+
+          combined.sort((a, b) => {
+            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+            return timeB - timeA;
+          });
+          saveStoredProducts(combined);
+          markCacheFresh('products');
+          onUpdate(combined);
+        }
+      },
+      (error) => {
+        recordQuotaExceeded(error);
+        if (onError) onError(error);
       }
-    },
-    (error) => {
-      console.warn("Firestore product listener note (quota limit / offline): using local cache.");
-      if (onError) onError(error);
-    }
-  );
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
 }
 
 export async function fetchProductsFromFirestore(): Promise<Product[]> {
+  const localProds = getStoredProducts().filter(p => !isDemoProduct(p));
+  if (isQuotaExhausted() || (isCacheFresh('products') && localProds.length > 0)) {
+    return localProds;
+  }
+
   const path = 'products';
   try {
     const snap = await getDocs(collection(db, path));
     const items: Product[] = [];
     snap.forEach(docSnap => {
-      items.push({ ...docSnap.data(), id: docSnap.id } as Product);
+      const p = { ...docSnap.data(), id: docSnap.id } as Product;
+      if (!isDemoProduct(p)) {
+        items.push(p);
+      }
     });
     if (items.length > 0) {
-      const currentLocal = getStoredProducts();
       const remoteIds = new Set(items.map(p => p.id));
-      const localOnly = currentLocal.filter(p => !remoteIds.has(p.id));
+      const localOnly = localProds.filter(p => !remoteIds.has(p.id) && !isDemoProduct(p));
       const combined = [...items, ...localOnly];
 
       combined.sort((a, b) => {
@@ -307,17 +505,18 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
         return timeB - timeA;
       });
       saveStoredProducts(combined);
+      markCacheFresh('products');
       return combined;
     }
   } catch (error) {
-    console.warn("fetchProductsFromFirestore quota/offline notice: falling back to local products.");
+    recordQuotaExceeded(error);
   }
-  return getStoredProducts();
+  return localProds;
 }
 
 export async function saveProductToFirestore(product: Product): Promise<void> {
-  // Always update local cache first so user's real product is instantly saved regardless of Firestore quota
-  const current = getStoredProducts();
+  if (isDemoProduct(product)) return;
+  const current = getStoredProducts().filter(p => !isDemoProduct(p));
   const idx = current.findIndex(p => p.id === product.id);
   let updated: Product[];
   if (idx > -1) {
@@ -330,21 +529,22 @@ export async function saveProductToFirestore(product: Product): Promise<void> {
 
   try {
     await setDoc(doc(db, 'products', product.id), product);
+    markCacheFresh('products');
   } catch (error) {
-    console.warn("Cloud save warning (quota exceeded): saved locally successfully.", error);
+    recordQuotaExceeded(error);
   }
 }
 
 export async function deleteProductFromFirestore(productId: string): Promise<void> {
-  // Always update local cache first
   const current = getStoredProducts();
   const updated = current.filter(p => p.id !== productId);
   saveStoredProducts(updated);
 
   try {
     await deleteDoc(doc(db, 'products', productId));
+    markCacheFresh('products');
   } catch (error) {
-    console.warn("Cloud delete warning (quota exceeded): deleted locally.", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -357,33 +557,46 @@ export function subscribeToOrders(
   const localOrders = getStoredOrders();
   onUpdate(localOrders);
 
-  const path = 'orders';
-  return onSnapshot(
-    collection(db, path),
-    (snapshot) => {
-      const items: Order[] = [];
-      snapshot.forEach(docSnap => {
-        items.push({ ...docSnap.data(), id: docSnap.id } as Order);
-      });
-      if (items.length > 0) {
-        const currentLocal = getStoredOrders();
-        const remoteIds = new Set(items.map(o => o.id));
-        const localOnly = currentLocal.filter(o => !remoteIds.has(o.id));
-        const combined = [...items, ...localOnly];
+  if (isQuotaExhausted()) return () => {};
 
-        combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        saveStoredOrders(combined);
-        onUpdate(combined);
+  const path = 'orders';
+  try {
+    return onSnapshot(
+      collection(db, path),
+      (snapshot) => {
+        const items: Order[] = [];
+        snapshot.forEach(docSnap => {
+          items.push({ ...docSnap.data(), id: docSnap.id } as Order);
+        });
+        if (items.length > 0) {
+          const currentLocal = getStoredOrders();
+          const remoteIds = new Set(items.map(o => o.id));
+          const localOnly = currentLocal.filter(o => !remoteIds.has(o.id));
+          const combined = [...items, ...localOnly];
+
+          combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          saveStoredOrders(combined);
+          markCacheFresh('orders');
+          onUpdate(combined);
+        }
+      },
+      (error) => {
+        recordQuotaExceeded(error);
+        if (onError) onError(error);
       }
-    },
-    (error) => {
-      console.warn("Orders subscription note:", error);
-      if (onError) onError(error);
-    }
-  );
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
 }
 
 export async function fetchOrdersFromFirestore(): Promise<Order[]> {
+  const local = getStoredOrders();
+  if (isQuotaExhausted() || (isCacheFresh('orders') && local.length > 0)) {
+    return local;
+  }
+
   try {
     const snap = await getDocs(collection(db, 'orders'));
     const items: Order[] = [];
@@ -391,18 +604,18 @@ export async function fetchOrdersFromFirestore(): Promise<Order[]> {
       items.push({ ...docSnap.data(), id: docSnap.id } as Order);
     });
     if (items.length > 0) {
-      const currentLocal = getStoredOrders();
       const remoteIds = new Set(items.map(o => o.id));
-      const localOnly = currentLocal.filter(o => !remoteIds.has(o.id));
+      const localOnly = local.filter(o => !remoteIds.has(o.id));
       const combined = [...items, ...localOnly];
       combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       saveStoredOrders(combined);
+      markCacheFresh('orders');
       return combined;
     }
   } catch (error) {
-    console.warn("fetchOrdersFromFirestore note: using local orders.");
+    recordQuotaExceeded(error);
   }
-  return getStoredOrders();
+  return local;
 }
 
 export async function createOrderInFirestore(order: Order): Promise<void> {
@@ -412,8 +625,9 @@ export async function createOrderInFirestore(order: Order): Promise<void> {
 
   try {
     await setDoc(doc(db, 'orders', order.id), order);
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Create order cloud warning (quota exceeded): saved locally.", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -426,8 +640,9 @@ export async function updateOrderStatusInFirestore(orderId: string, status: Orde
     const updateData: Partial<Order> = { status };
     if (reason !== undefined) updateData.cancelledReason = reason;
     await updateDoc(doc(db, 'orders', orderId), updateData);
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Update order status cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -441,8 +656,9 @@ export async function updateOrderTrackingInFirestore(
 
   try {
     await updateDoc(doc(db, 'orders', orderId), trackingData);
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Update tracking cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -453,8 +669,9 @@ export async function hideOrderFromAdminInFirestore(orderId: string): Promise<vo
 
   try {
     await updateDoc(doc(db, 'orders', orderId), { deletedByAdmin: true });
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Hide order cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -465,8 +682,9 @@ export async function restoreOrderToAdminInFirestore(orderId: string): Promise<v
 
   try {
     await updateDoc(doc(db, 'orders', orderId), { deletedByAdmin: false });
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Restore order cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -477,8 +695,9 @@ export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
 
   try {
     await deleteDoc(doc(db, 'orders', orderId));
+    markCacheFresh('orders');
   } catch (error) {
-    console.warn("Delete order cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -490,27 +709,40 @@ export function subscribeToBanners(
 ): Unsubscribe {
   onUpdate(getStoredBanners());
 
+  if (isQuotaExhausted()) return () => {};
+
   const path = 'banners';
-  return onSnapshot(
-    collection(db, path),
-    (snapshot) => {
-      const items: BannerAd[] = [];
-      snapshot.forEach(docSnap => {
-        items.push({ ...docSnap.data(), id: docSnap.id } as BannerAd);
-      });
-      if (items.length > 0) {
-        saveStoredBanners(items);
-        onUpdate(items);
+  try {
+    return onSnapshot(
+      collection(db, path),
+      (snapshot) => {
+        const items: BannerAd[] = [];
+        snapshot.forEach(docSnap => {
+          items.push({ ...docSnap.data(), id: docSnap.id } as BannerAd);
+        });
+        if (items.length > 0) {
+          saveStoredBanners(items);
+          markCacheFresh('banners');
+          onUpdate(items);
+        }
+      },
+      (error) => {
+        recordQuotaExceeded(error);
+        if (onError) onError(error);
       }
-    },
-    (error) => {
-      console.warn("Banners subscription note:", error);
-      if (onError) onError(error);
-    }
-  );
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
 }
 
 export async function fetchBannersFromFirestore(): Promise<BannerAd[]> {
+  const local = getStoredBanners();
+  if (isQuotaExhausted() || (isCacheFresh('banners') && local.length > 0)) {
+    return local;
+  }
+
   try {
     const snap = await getDocs(collection(db, 'banners'));
     const items: BannerAd[] = [];
@@ -519,12 +751,13 @@ export async function fetchBannersFromFirestore(): Promise<BannerAd[]> {
     });
     if (items.length > 0) {
       saveStoredBanners(items);
+      markCacheFresh('banners');
       return items;
     }
   } catch (error) {
-    console.warn("fetchBannersFromFirestore note: using local banners.");
+    recordQuotaExceeded(error);
   }
-  return getStoredBanners();
+  return local;
 }
 
 export async function createBannerInFirestore(banner: BannerAd): Promise<void> {
@@ -533,8 +766,9 @@ export async function createBannerInFirestore(banner: BannerAd): Promise<void> {
 
   try {
     await setDoc(doc(db, 'banners', banner.id), banner);
+    markCacheFresh('banners');
   } catch (error) {
-    console.warn("Create banner cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -548,8 +782,9 @@ export async function updateBannerInFirestore(bannerOrId: string | BannerAd, ban
 
   try {
     await setDoc(doc(db, 'banners', bannerId), data, { merge: true });
+    markCacheFresh('banners');
   } catch (error) {
-    console.warn("Update banner cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -559,8 +794,9 @@ export async function deleteBannerFromFirestore(bannerId: string): Promise<void>
 
   try {
     await deleteDoc(doc(db, 'banners', bannerId));
+    markCacheFresh('banners');
   } catch (error) {
-    console.warn("Delete banner cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -576,26 +812,47 @@ export function subscribeToStoreSettings(
     // ignore
   }
 
-  return onSnapshot(
-    doc(db, 'settings', 'store_configuration'),
-    (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as StoreSettings;
-        try {
-          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data));
-        } catch {
-          // ignore
+  if (isQuotaExhausted()) return () => {};
+
+  try {
+    return onSnapshot(
+      doc(db, 'settings', 'store_configuration'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as StoreSettings;
+          try {
+            localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data));
+            markCacheFresh('settings');
+          } catch {
+            // ignore
+          }
+          onUpdate(data);
         }
-        onUpdate(data);
+      },
+      (error) => {
+        recordQuotaExceeded(error);
       }
-    },
-    (error) => {
-      console.warn("Store settings snapshot note:", error);
-    }
-  );
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
 }
 
 export async function fetchStoreSettings(): Promise<any> {
+  const getLocalSettings = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  };
+
+  if (isQuotaExhausted() || isCacheFresh('settings')) {
+    const local = getLocalSettings();
+    if (local) return local;
+  }
+
   try {
     const docRef = doc(db, 'settings', 'store_configuration');
     const docSnap = await getDoc(docRef);
@@ -603,26 +860,22 @@ export async function fetchStoreSettings(): Promise<any> {
       const data = docSnap.data();
       try {
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(data));
+        markCacheFresh('settings');
       } catch {
         // ignore
       }
       return data;
     }
   } catch (err) {
-    console.warn("Error fetching store settings from Firestore: using local cache.");
+    recordQuotaExceeded(err);
   }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // ignore
-  }
-  return null;
+  return getLocalSettings();
 }
 
 export async function saveStoreSettings(settings: any): Promise<void> {
   try {
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    markCacheFresh('settings');
   } catch {
     // ignore
   }
@@ -633,7 +886,7 @@ export async function saveStoreSettings(settings: any): Promise<void> {
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
-    console.warn("Save store settings cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -642,35 +895,71 @@ export async function saveStoreSettings(settings: any): Promise<void> {
 export function subscribeToAdConfig(
   onUpdate: (config: AdConfiguration) => void
 ): Unsubscribe {
-  return onSnapshot(
-    doc(db, 'settings', 'ad_configuration'),
-    (docSnap) => {
-      if (docSnap.exists()) {
-        onUpdate(docSnap.data() as AdConfiguration);
+  try {
+    const raw = localStorage.getItem('himaya_ad_config');
+    if (raw) onUpdate(JSON.parse(raw));
+  } catch {}
+
+  if (isQuotaExhausted()) return () => {};
+
+  try {
+    return onSnapshot(
+      doc(db, 'settings', 'ad_configuration'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as AdConfiguration;
+          try {
+            localStorage.setItem('himaya_ad_config', JSON.stringify(data));
+            markCacheFresh('ad_config');
+          } catch {}
+          onUpdate(data);
+        }
+      },
+      (error) => {
+        recordQuotaExceeded(error);
       }
-    },
-    (error) => {
-      console.warn("Ad config snapshot note:", error);
-    }
-  );
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
 }
 
 export async function fetchAdConfig(): Promise<AdConfiguration | null> {
+  const getLocal = () => {
+    try {
+      const raw = localStorage.getItem('himaya_ad_config');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return null;
+  };
+
+  if (isQuotaExhausted() || isCacheFresh('ad_config')) {
+    const local = getLocal();
+    if (local) return local;
+  }
+
   try {
     const docRef = doc(db, 'settings', 'ad_configuration');
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      return docSnap.data() as AdConfiguration;
+      const data = docSnap.data() as AdConfiguration;
+      try {
+        localStorage.setItem('himaya_ad_config', JSON.stringify(data));
+        markCacheFresh('ad_config');
+      } catch {}
+      return data;
     }
   } catch (err) {
-    console.warn("Error fetching ad configuration from Firestore:", err);
+    recordQuotaExceeded(err);
   }
-  return null;
+  return getLocal();
 }
 
 export async function saveAdConfig(config: AdConfiguration): Promise<void> {
   try {
     localStorage.setItem('himaya_ad_config', JSON.stringify(config));
+    markCacheFresh('ad_config');
   } catch {
     // ignore
   }
@@ -681,7 +970,7 @@ export async function saveAdConfig(config: AdConfiguration): Promise<void> {
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
-    console.warn("Save ad config cloud warning:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -712,6 +1001,21 @@ export function subscribeToAuth(callback: (user: User | null) => void): Unsubscr
 
 // Fetch configured admin emails from Firestore or fallback to default
 export async function fetchAdminEmails(): Promise<string[]> {
+  const getLocalEmails = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.ADMIN_EMAILS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_ADMIN_EMAILS;
+  };
+
+  if (isQuotaExhausted() || isCacheFresh('admin_emails')) {
+    return getLocalEmails();
+  }
+
   try {
     const docRef = doc(db, 'settings', 'admin_permissions');
     const docSnap = await getDoc(docRef);
@@ -721,34 +1025,23 @@ export async function fetchAdminEmails(): Promise<string[]> {
         const combined = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...data.emails.map((e: string) => e.toLowerCase().trim())]));
         try {
           localStorage.setItem(STORAGE_KEYS.ADMIN_EMAILS, JSON.stringify(combined));
-        } catch {
-          // ignore
-        }
+          markCacheFresh('admin_emails');
+        } catch {}
         return combined;
       }
     }
   } catch (err) {
-    console.warn("Using default or cached admin emails due to quota/offline.");
+    recordQuotaExceeded(err);
   }
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.ADMIN_EMAILS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch {
-    // ignore
-  }
-  return DEFAULT_ADMIN_EMAILS;
+  return getLocalEmails();
 }
 
 export async function saveAdminEmails(emails: string[]): Promise<void> {
   const cleanList = Array.from(new Set([...DEFAULT_ADMIN_EMAILS, ...emails.map(e => e.toLowerCase().trim())]));
   try {
     localStorage.setItem(STORAGE_KEYS.ADMIN_EMAILS, JSON.stringify(cleanList));
-  } catch {
-    // ignore
-  }
+    markCacheFresh('admin_emails');
+  } catch {}
 
   try {
     await setDoc(doc(db, 'settings', 'admin_permissions'), {
@@ -756,7 +1049,7 @@ export async function saveAdminEmails(emails: string[]): Promise<void> {
       updatedAt: new Date().toISOString()
     });
   } catch (err) {
-    console.warn("Save admin emails cloud warning:", err);
+    recordQuotaExceeded(err);
   }
 }
 
@@ -783,26 +1076,20 @@ export function getStoredCustomer(): CustomerUser | null {
   try {
     const raw = localStorage.getItem(CUSTOMER_STORAGE_KEY);
     if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.warn("Could not read customer from storage", e);
-  }
+  } catch {}
   return null;
 }
 
 export function saveStoredCustomer(customer: CustomerUser): void {
   try {
     localStorage.setItem(CUSTOMER_STORAGE_KEY, JSON.stringify(customer));
-  } catch (e) {
-    console.warn("Could not save customer to storage", e);
-  }
+  } catch {}
 }
 
 export function clearStoredCustomer(): void {
   try {
     localStorage.removeItem(CUSTOMER_STORAGE_KEY);
-  } catch (e) {
-    console.warn("Could not clear customer storage", e);
-  }
+  } catch {}
 }
 
 export async function saveCustomerToFirestore(customer: CustomerUser): Promise<void> {
@@ -817,7 +1104,7 @@ export async function saveCustomerToFirestore(customer: CustomerUser): Promise<v
       createdAt: new Date().toISOString()
     }, { merge: true });
   } catch (err) {
-    console.warn("Could not save customer to Firestore:", err);
+    recordQuotaExceeded(err);
   }
 }
 
@@ -847,7 +1134,7 @@ export async function registerCustomerWithEmail(name: string, emailOrPhone: stri
       createdAt: new Date().toISOString()
     }, { merge: true });
   } catch (err) {
-    console.warn("Could not save registered customer to Firestore:", err);
+    recordQuotaExceeded(err);
   }
 
   saveStoredCustomer(customer);
@@ -887,7 +1174,7 @@ export async function loginCustomerWithEmail(emailOrPhone: string, pass: string)
     if (err.message && err.message.includes("ভুল পাসওয়ার্ড")) {
       throw err;
     }
-    console.warn("Firestore customer login check warning:", err);
+    recordQuotaExceeded(err);
   }
 
   const customer: CustomerUser = {
