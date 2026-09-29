@@ -136,6 +136,7 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'featured' | 'price-low' | 'price-high'>('featured');
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Modals state
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -501,17 +502,7 @@ export default function App() {
     });
   };
 
-  // Helper to identify products pinned from admin panel
-  const isPinnedProduct = (p: Product) => Boolean(
-    p.isPinned || 
-    p.isPopular || 
-    (p.badge && (p.badge.toLowerCase().includes('pinned') || p.badge.toLowerCase().includes('popular') || p.badge.toLowerCase().includes('pin') || p.badge.toLowerCase().includes('print')))
-  );
-
-  // Dedicated section at the top: Pinned products from admin panel
-  const pinnedProducts = (products || []).filter(p => !isDemoProduct(p) && isPinnedProduct(p));
-
-  // Below the pinned section, ensure the full list of all real products is correctly displayed
+  // All real products
   const allRealProducts = (products || []).filter(p => !isDemoProduct(p));
 
   // Filtered & sorted products for the main catalog
@@ -532,6 +523,18 @@ export default function App() {
     if (sortBy === 'price-high') return priceB - priceA;
     return (b?.featured ? 1 : 0) - (a?.featured ? 1 : 0);
   });
+
+  const ITEMS_PER_PAGE = 30;
+  const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE) || 1;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, searchQuery, sortBy]);
+
+  const paginatedProducts = filteredProducts.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-[#1A1A1A] flex flex-col font-sans">
@@ -571,19 +574,7 @@ export default function App() {
         appButtonText={storeSettings?.appButtonText || "Download apps"}
       />
 
-      {/* Dedicated Pinned Products Section at the top (Pinned from Admin Panel) */}
-      {pinnedProducts.length > 0 && (
-        <PopularProductsSection
-          products={pinnedProducts}
-          onSelectProduct={handleSelectProduct}
-          onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
-          onDirectCheckout={(p, s, c) => handleDirectCheckout(p, s, c, 1)}
-          wishlist={wishlist}
-          onToggleWishlist={handleToggleWishlist}
-        />
-      )}
-
-      {/* Main Product Catalog Section: Full list of all real products displayed below the pinned section */}
+      {/* Main Product Catalog Section */}
       <main id="product-grid" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 w-full space-y-8">
         
         {/* Section Header & Filters */}
@@ -649,17 +640,76 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-1.5 sm:gap-4 md:gap-6">
-            {filteredProducts.map(product => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onSelect={handleSelectProduct}
-                onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
-                isWishlisted={wishlist.some(w => w.id === product.id)}
-                onToggleWishlist={handleToggleWishlist}
-              />
-            ))}
+          <div className="space-y-8">
+            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 gap-1.5 sm:gap-4 md:gap-6">
+              {paginatedProducts.map(product => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onSelect={handleSelectProduct}
+                  onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
+                  isWishlisted={wishlist.some(w => w.id === product.id)}
+                  onToggleWishlist={handleToggleWishlist}
+                />
+              ))}
+            </div>
+
+            {/* Pagination Controls (30 products per page with Next button) */}
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between pt-8 border-t border-[#E6E2DD] gap-4">
+                <div className="text-xs text-[#666]">
+                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredProducts.length)} of {filteredProducts.length} products
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="px-4 py-2 border border-[#E6E2DD] rounded-lg text-xs font-semibold bg-white text-[#1A1A1A] hover:bg-[#FAF9F6] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    Previous
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(num => {
+                      if (
+                        num === 1 ||
+                        num === totalPages ||
+                        (num >= currentPage - 1 && num <= currentPage + 1)
+                      ) {
+                        return (
+                          <button
+                            key={num}
+                            onClick={() => setCurrentPage(num)}
+                            className={`w-8 h-8 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                              currentPage === num
+                                ? 'bg-[#1A1A1A] text-white'
+                                : 'bg-white border border-[#E6E2DD] text-[#1A1A1A] hover:bg-[#FAF9F6]'
+                            }`}
+                          >
+                            {num}
+                          </button>
+                        );
+                      } else if (
+                        num === currentPage - 2 ||
+                        num === currentPage + 2
+                      ) {
+                        return <span key={num} className="px-1 text-[#888]">...</span>;
+                      }
+                      return null;
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="px-4 py-2 border border-[#E6E2DD] rounded-lg text-xs font-semibold bg-white text-[#1A1A1A] hover:bg-[#FAF9F6] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    Next &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

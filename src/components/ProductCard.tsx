@@ -63,12 +63,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         {/* Badges Container */}
         <div className="absolute top-1 left-1 sm:top-2.5 sm:left-2.5 flex flex-col gap-1 z-10">
-          {(product.isPinned || product.isPopular) && (
-            <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[7px] sm:text-[9px] font-black uppercase px-1.5 sm:px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
-              <span>🔥</span>
-              <span>Popular</span>
-            </span>
-          )}
           {hasDiscount && discountPercent > 0 && (
             <span className="bg-rose-600 text-white text-[7px] sm:text-[10px] font-extrabold uppercase px-1 sm:px-2 py-0.5 rounded shadow-xs">
               {discountPercent}% OFF

@@ -1414,33 +1414,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     onRefreshData();
   };
 
-  const handleTogglePinProduct = async (product: Product) => {
-    const newPinned = !product.isPinned;
-    const updatedProduct: Product = {
-      ...product,
-      isPinned: newPinned,
-      isPopular: newPinned,
-      createdAt: product.createdAt || new Date().toISOString()
-    };
-
-    setLocalProducts(prev => prev.map(p => p.id === product.id ? updatedProduct : p));
-
-    try {
-      await saveProductToFirestore(updatedProduct);
-      await fetch(`/api/products/${product.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedProduct)
-      }).catch(() => {});
-      setToastMessage(newPinned 
-        ? `📌 "${product.title}" 'Most Popular' (প্রিন্ট/পিন) হিসেবে শীর্ষে প্রদর্শনের জন্য সেট করা হয়েছে!` 
-        : `"${product.title}" কে 'Most Popular' থেকে সরানো হয়েছে।`);
-      onRefreshData();
-    } catch (err) {
-      console.warn("Toggle pin warning:", err);
-    }
-  };
-
   const handlePromptDeleteProduct = (product: Product) => {
     setDeleteModal({
       isOpen: true,
@@ -3161,33 +3134,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             />
                           </div>
 
-                          {/* Row 6: Pin as Popular Product Toggle */}
-                          <div className="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-xl flex items-center justify-between">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shadow-xs">
-                                <Pin className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <div className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                                  <span>Flag as Print / Most Popular (শীর্ষে 'Most Popular' হিসেবে প্রিন্ট/পিন করুন)</span>
-                                  <span className="text-[9px] font-extrabold bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full">Top Section</span>
-                                </div>
-                                <div className="text-[10px] text-amber-800/80 mt-0.5">
-                                  এই অপশনটি চালু করলে পণ্যটি ওয়েবসাইটের শীর্ষে "Most Popular" সেকশনে পাশাপাশি প্রদর্শিত হবে।
-                                </div>
-                              </div>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(productForm.isPinned)}
-                                onChange={e => setProductForm({ ...productForm, isPinned: e.target.checked })}
-                                className="sr-only peer"
-                              />
-                              <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
-                            </label>
-                          </div>
-
                           {/* Submit / Cancel Bar */}
                           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                             <button
@@ -3255,12 +3201,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <div>
                                       <div className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                                         <span>{p.title}</span>
-                                        {p.isPinned && (
-                                          <span className="inline-flex items-center gap-0.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-bold">
-                                            <Pin className="w-2.5 h-2.5 fill-current" />
-                                            <span>Pinned Popular</span>
-                                          </span>
-                                        )}
                                       </div>
                                       <div className="text-[10px] text-slate-500 mt-0.5">ID: {p.id}</div>
                                     </div>
@@ -3286,12 +3226,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   </td>
                                   <td className="p-3.5">
                                     <div className="flex flex-col gap-1 items-start">
-                                      {p.isPinned && (
-                                        <span className="bg-amber-500 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase flex items-center gap-1">
-                                          <Pin className="w-2.5 h-2.5 fill-current" />
-                                          <span>Popular</span>
-                                        </span>
-                                      )}
                                       {p.badge && (
                                         <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase">
                                           {p.badge}
@@ -3300,19 +3234,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     </div>
                                   </td>
                                   <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleTogglePinProduct(p)}
-                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                        p.isPinned 
-                                          ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm' 
-                                          : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
-                                      }`}
-                                      title={p.isPinned ? "📌 'Most Popular' (প্রিন্ট/পিন) সক্রিয় আছে — আন-পিন করতে ক্লিক করুন" : "📌 'Most Popular' (প্রিন্ট/পিন) হিসেবে শীর্ষে পাশাপাশি প্রদর্শন করতে ক্লিক করুন"}
-                                    >
-                                      <Pin className={`w-3.5 h-3.5 ${p.isPinned ? 'fill-current' : ''}`} />
-                                      <span>{p.isPinned ? 'Print / Popular' : 'Print / Pin'}</span>
-                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => {
