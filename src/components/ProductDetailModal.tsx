@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import { Product } from '../types';
 import { 
   X, ShoppingBag, Heart, Shield, RefreshCw, Truck, Share2, Copy, Check, 
-  MessageCircle, Zap, Eye, Maximize2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight
+  MessageCircle, Zap, Eye, Maximize2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight,
+  Star, MessageSquare
 } from 'lucide-react';
+import { subscribeToReviews, saveReviewToFirestore } from '../firebase';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -37,6 +39,46 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [viewerZoom, setViewerZoom] = useState(1);
+
+  // Customer Reviews state & Firestore subscription
+  const [reviews, setReviews] = useState<any[]>([]);
+  const [newReviewAuthor, setNewReviewAuthor] = useState('');
+  const [newReviewRating, setNewReviewRating] = useState(5);
+  const [newReviewComment, setNewReviewComment] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [reviewSuccessMsg, setReviewSuccessMsg] = useState('');
+
+  React.useEffect(() => {
+    if (!product) return;
+    const unsub = subscribeToReviews(product.id, (fetchedReviews) => {
+      setReviews(fetchedReviews);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [product?.id]);
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newReviewComment.trim()) return;
+    setIsSubmittingReview(true);
+    try {
+      await saveReviewToFirestore(product.id, {
+        author: newReviewAuthor.trim() || 'Valued Customer',
+        rating: Number(newReviewRating) || 5,
+        comment: newReviewComment.trim()
+      });
+      setNewReviewComment('');
+      setNewReviewAuthor('');
+      setNewReviewRating(5);
+      setReviewSuccessMsg('আপনার রিভিউটি সফলভাবে জমা হয়েছে!');
+      setTimeout(() => setReviewSuccessMsg(''), 3000);
+    } catch (err) {
+      console.warn("Review submit error:", err);
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
 
   // Sync active image if product changes
   React.useEffect(() => {
@@ -451,6 +493,108 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <Shield className="w-4 h-4 text-[#C5A059]" />
                   <span>Secure Checkout</span>
                 </div>
+              </div>
+
+              {/* Customer Reviews Section */}
+              <div className="pt-5 mt-5 border-t border-[#E6E2DD] space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-[#C5A059]" />
+                    <h3 className="font-serif text-sm font-bold text-[#1A1A1A]">
+                      Customer Reviews ({reviews.length})
+                    </h3>
+                  </div>
+                  {reviews.length > 0 && (
+                    <div className="flex items-center gap-1 text-xs font-bold text-amber-500">
+                      <Star className="w-3.5 h-3.5 fill-current" />
+                      <span>
+                        {(reviews.reduce((acc, r) => acc + (r.rating || 5), 0) / reviews.length).toFixed(1)} / 5.0
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Reviews List */}
+                <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
+                  {reviews.length === 0 ? (
+                    <p className="text-xs text-[#888] italic py-2">
+                      এই পণ্যের উপর এখনো কোনো রিভিউ নেই। প্রথম রিভিউটি আপনিই দিন!
+                    </p>
+                  ) : (
+                    reviews.map((rev) => (
+                      <div key={rev.id} className="p-3 bg-[#FAF9F6] rounded-xl border border-[#E6E2DD] space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#1A1A1A]">{rev.author}</span>
+                          <div className="flex items-center gap-0.5 text-amber-500">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <Star
+                                key={i}
+                                className={`w-3 h-3 ${i < (rev.rating || 5) ? 'fill-current text-amber-500' : 'text-slate-300'}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-xs text-[#555] leading-relaxed">{rev.comment}</p>
+                        <div className="text-[10px] text-[#999] pt-1">
+                          {new Date(rev.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Add Review Form */}
+                <form onSubmit={handleReviewSubmit} className="p-3.5 bg-[#F8F7F4] rounded-xl border border-[#E6E2DD] space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#1A1A1A]">
+                    আপনার মতামত বা রিভিউ দিন
+                  </h4>
+                  {reviewSuccessMsg && (
+                    <div className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg">
+                      {reviewSuccessMsg}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      placeholder="আপনার নাম (যেমন: তানভীর আহমেদ)"
+                      value={newReviewAuthor}
+                      onChange={(e) => setNewReviewAuthor(e.target.value)}
+                      className="px-3 py-2 text-xs bg-white border border-[#E6E2DD] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
+                    />
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#E6E2DD] rounded-lg">
+                      <span className="text-xs font-semibold text-[#666]">রেটিং:</span>
+                      <div className="flex gap-1 cursor-pointer">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            type="button"
+                            key={star}
+                            onClick={() => setNewReviewRating(star)}
+                            className="p-0.5 focus:outline-none cursor-pointer"
+                          >
+                            <Star
+                              className={`w-4 h-4 ${star <= newReviewRating ? 'text-amber-500 fill-current' : 'text-slate-300'}`}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <textarea
+                    rows={2}
+                    placeholder="পণ্যটি সম্পর্কে আপনার অভিজ্ঞতা লিখুন..."
+                    value={newReviewComment}
+                    onChange={(e) => setNewReviewComment(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-[#E6E2DD] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#C5A059]"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSubmittingReview}
+                    className="px-4 py-2 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingReview ? 'জমা হচ্ছে...' : 'রিভিউ সাবমিট করুন'}
+                  </button>
+                </form>
               </div>
             </div>
           </div>

@@ -49,7 +49,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   };
 
   return (
-    <div className="group relative bg-white border border-[#E6E2DD] rounded-lg sm:rounded-xl overflow-hidden shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col">
+    <div className="group relative bg-white border border-[#E6E2DD] rounded-lg sm:rounded-xl overflow-hidden shadow-xs hover:shadow-xl hover:scale-[1.03] transition-all duration-300 flex flex-col">
       {/* Image Container */}
       <div 
         className="relative aspect-[3/4] bg-[#F4F4F0] overflow-hidden cursor-pointer"

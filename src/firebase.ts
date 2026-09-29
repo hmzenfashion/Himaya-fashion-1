@@ -1190,5 +1190,106 @@ export async function loginCustomerWithEmail(emailOrPhone: string, pass: string)
   return customer;
 }
 
+// --- Customer Reviews CRUD ---
+export interface ProductReview {
+  id: string;
+  productId: string;
+  author: string;
+  rating: number; // 1 to 5
+  comment: string;
+  createdAt: string;
+  userId?: string;
+}
+
+export function getStoredReviews(productId: string): ProductReview[] {
+  try {
+    const raw = localStorage.getItem(`himaya_reviews_${productId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+export function saveStoredReviews(productId: string, reviews: ProductReview[]): void {
+  try {
+    localStorage.setItem(`himaya_reviews_${productId}`, JSON.stringify(reviews));
+  } catch {}
+}
+
+export async function fetchReviewsForProduct(productId: string): Promise<ProductReview[]> {
+  const local = getStoredReviews(productId);
+  if (isQuotaExhausted()) return local;
+
+  try {
+    const snap = await getDocs(collection(db, `products/${productId}/reviews`));
+    const items: ProductReview[] = [];
+    snap.forEach(docSnap => {
+      items.push({ ...docSnap.data(), id: docSnap.id } as ProductReview);
+    });
+    if (items.length > 0) {
+      items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      saveStoredReviews(productId, items);
+      return items;
+    }
+  } catch (err) {
+    recordQuotaExceeded(err);
+  }
+  return local;
+}
+
+export function subscribeToReviews(productId: string, onUpdate: (reviews: ProductReview[]) => void): Unsubscribe {
+  const local = getStoredReviews(productId);
+  if (local.length > 0) onUpdate(local);
+
+  if (isQuotaExhausted()) return () => {};
+
+  try {
+    return onSnapshot(
+      collection(db, `products/${productId}/reviews`),
+      (snapshot) => {
+        const items: ProductReview[] = [];
+        snapshot.forEach(docSnap => {
+          items.push({ ...docSnap.data(), id: docSnap.id } as ProductReview);
+        });
+        items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        saveStoredReviews(productId, items);
+        onUpdate(items);
+      },
+      (err) => {
+        recordQuotaExceeded(err);
+      }
+    );
+  } catch (err) {
+    recordQuotaExceeded(err);
+    return () => {};
+  }
+}
+
+export async function saveReviewToFirestore(productId: string, reviewData: Omit<ProductReview, 'id' | 'createdAt' | 'productId'>): Promise<ProductReview> {
+  const reviewId = `rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const newReview: ProductReview = {
+    id: reviewId,
+    productId,
+    author: reviewData.author || 'Customer',
+    rating: Number(reviewData.rating) || 5,
+    comment: reviewData.comment || '',
+    createdAt: new Date().toISOString(),
+    userId: reviewData.userId || ''
+  };
+
+  const current = getStoredReviews(productId);
+  const updated = [newReview, ...current];
+  saveStoredReviews(productId, updated);
+
+  try {
+    await setDoc(doc(db, `products/${productId}/reviews`, reviewId), newReview);
+  } catch (err) {
+    recordQuotaExceeded(err);
+  }
+  return newReview;
+}
+
 
 

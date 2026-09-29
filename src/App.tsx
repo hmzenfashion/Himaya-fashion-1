@@ -382,6 +382,53 @@ export default function App() {
     }
   };
 
+  // Dynamic OpenGraph & SEO meta tags update based on selected product
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const defaultTitle = "Himaya Fashion — Luxury Apparel & Modern Collections";
+    const defaultDesc = "Discover exquisite fashion, timeless elegance, and modern couture at Himaya Fashion. Shop new arrivals, curated collections, and exclusive offers.";
+    const defaultImage = "https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&q=80&w=1200";
+    const currentUrl = window.location.href;
+
+    const setMeta = (id: string, prop: string, isName: boolean, val: string) => {
+      let el = document.getElementById(id) || document.querySelector(isName ? `meta[name="${prop}"]` : `meta[property="${prop}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        if (isName) el.setAttribute('name', prop);
+        else el.setAttribute('property', prop);
+        el.setAttribute('id', id);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', val);
+    };
+
+    if (selectedProduct) {
+      const prodTitle = `${selectedProduct.title} | ৳${selectedProduct.price.toLocaleString()} | Himaya Fashion`;
+      const prodDesc = selectedProduct.description ? selectedProduct.description.substring(0, 160) : `Buy ${selectedProduct.title} at Himaya Fashion. Price: ৳${selectedProduct.price.toLocaleString()}.`;
+      const prodImage = selectedProduct.image || defaultImage;
+
+      document.title = prodTitle;
+      setMeta('meta-description', 'description', true, prodDesc);
+      setMeta('meta-og-title', 'og:title', false, prodTitle);
+      setMeta('meta-og-description', 'og:description', false, prodDesc);
+      setMeta('meta-og-image', 'og:image', false, prodImage);
+      setMeta('meta-og-url', 'og:url', false, currentUrl);
+      setMeta('meta-twitter-title', 'twitter:title', false, prodTitle);
+      setMeta('meta-twitter-description', 'twitter:description', false, prodDesc);
+      setMeta('meta-twitter-image', 'twitter:image', false, prodImage);
+    } else {
+      document.title = defaultTitle;
+      setMeta('meta-description', 'description', true, defaultDesc);
+      setMeta('meta-og-title', 'og:title', false, defaultTitle);
+      setMeta('meta-og-description', 'og:description', false, defaultDesc);
+      setMeta('meta-og-image', 'og:image', false, defaultImage);
+      setMeta('meta-og-url', 'og:url', false, currentUrl);
+      setMeta('meta-twitter-title', 'twitter:title', false, defaultTitle);
+      setMeta('meta-twitter-description', 'twitter:description', false, defaultDesc);
+      setMeta('meta-twitter-image', 'twitter:image', false, defaultImage);
+    }
+  }, [selectedProduct]);
+
   // Deep linking: Open product or direct order on page load if product ID in URL
   useEffect(() => {
     if (products.length === 0) return;
