@@ -27,7 +27,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Product, Order, BannerAd, StoreSettings, AdConfiguration } from './types';
-import { initialBanners } from './data/initialData';
+import { initialBanners, initialProducts } from './data/initialData';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -247,18 +247,20 @@ export function getStoredProducts(): Product[] {
     const raw = localStorage.getItem(STORAGE_KEYS.PRODUCTS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
+      if (Array.isArray(parsed) && parsed.length > 0) {
         const clean = parsed.filter(p => !isDemoProduct(p));
-        if (clean.length !== parsed.length) {
-          saveStoredProducts(clean);
+        if (clean.length > 0) {
+          if (clean.length !== parsed.length) {
+            saveStoredProducts(clean);
+          }
+          return clean;
         }
-        return clean;
       }
     }
   } catch (e) {
     // ignore
   }
-  return [];
+  return initialProducts;
 }
 
 export function getStoredCustomProducts(): Product[] {

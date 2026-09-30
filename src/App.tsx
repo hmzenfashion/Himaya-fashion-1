@@ -89,7 +89,15 @@ export const sanitizeProduct = (p: any): Product => {
 };
 
 export default function App() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const prods = getStoredProducts();
+      if (Array.isArray(prods) && prods.length > 0) {
+        return prods.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+      }
+    } catch {}
+    return initialProducts.map(sanitizeProduct);
+  });
   const [banners, setBanners] = useState<BannerAd[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | undefined>(undefined);
