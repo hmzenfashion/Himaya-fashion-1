@@ -88,6 +88,23 @@ export const sanitizeProduct = (p: any): Product => {
   };
 };
 
+// Ensure any old demo products and false quota locks are purged from browser storage
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('himaya_firestore_quota_exhausted');
+    const stored = localStorage.getItem('himaya_real_products');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        const clean = parsed.filter((p: any) => !isDemoProduct(p));
+        if (clean.length !== parsed.length) {
+          localStorage.setItem('himaya_real_products', JSON.stringify(clean));
+        }
+      }
+    }
+  } catch {}
+}
+
 export default function App() {
   const [products, setProducts] = useState<Product[]>(() => {
     try {
@@ -96,7 +113,7 @@ export default function App() {
         return prods.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
       }
     } catch {}
-    return initialProducts.map(sanitizeProduct);
+    return [];
   });
   const [banners, setBanners] = useState<BannerAd[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -211,31 +228,29 @@ export default function App() {
         // ignore
       }
 
-      // 3. Only query Cloud Firestore if quota is NOT exhausted
-      if (!isQuotaExhausted()) {
-        try {
-          const [fbProds, fbOrders, fbBans, fbSets, fbEmails, fbAds, fbCoupons] = await Promise.all([
-            fetchProductsFromFirestore(),
-            fetchOrdersFromFirestore(),
-            fetchBannersFromFirestore(),
-            fetchStoreSettings(),
-            fetchAdminEmails(),
-            fetchAdConfig().catch(() => null),
-            fetchCouponsFromFirestore().catch(() => [])
-          ]);
-          if (fbProds && fbProds.length > 0) {
-            const cleanProds = fbProds.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
-            if (cleanProds.length > 0) setProducts(cleanProds);
-          }
-          if (fbOrders) setOrders(fbOrders);
-          if (fbBans) setBanners(fbBans);
-          if (fbSets) setStoreSettings(fbSets);
-          if (fbEmails && fbEmails.length > 0) setAdminEmails(fbEmails);
-          if (fbAds) setAdConfig(fbAds);
-          if (fbCoupons && fbCoupons.length > 0) setCoupons(fbCoupons);
-        } catch (fbErr) {
-          recordQuotaExceeded(fbErr);
+      // 3. Query Cloud Firestore directly
+      try {
+        const [fbProds, fbOrders, fbBans, fbSets, fbEmails, fbAds, fbCoupons] = await Promise.all([
+          fetchProductsFromFirestore().catch(() => []),
+          fetchOrdersFromFirestore().catch(() => []),
+          fetchBannersFromFirestore().catch(() => []),
+          fetchStoreSettings().catch(() => null),
+          fetchAdminEmails().catch(() => []),
+          fetchAdConfig().catch(() => null),
+          fetchCouponsFromFirestore().catch(() => [])
+        ]);
+        if (fbProds && fbProds.length > 0) {
+          const cleanProds = fbProds.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+          setProducts(cleanProds);
         }
+        if (fbOrders && fbOrders.length > 0) setOrders(fbOrders);
+        if (fbBans && fbBans.length > 0) setBanners(fbBans);
+        if (fbSets) setStoreSettings(fbSets);
+        if (fbEmails && fbEmails.length > 0) setAdminEmails(fbEmails);
+        if (fbAds) setAdConfig(fbAds);
+        if (fbCoupons && fbCoupons.length > 0) setCoupons(fbCoupons);
+      } catch (fbErr) {
+        console.warn("Firestore data fetch error:", fbErr);
       }
     } catch (err) {
       // ignore
@@ -283,20 +298,17 @@ export default function App() {
     }
 
     // 3. Initialize Firebase Firestore & subscribe
-    const initFirebaseData = async () => {
+    const initFirebaseData = () => {
       try {
-        await testConnection();
-        setIsFirebaseSyncActive(true);
+        testConnection().then((ok) => {
+          if (ok) setIsFirebaseSyncActive(true);
+        }).catch(() => {});
 
         // Subscribe to real-time changes
         unsubProducts = subscribeToProducts((prods) => {
-          if (prods && prods.length > 0) {
-            const clean = prods.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
-            if (clean.length > 0) {
-              setProducts(clean);
-              setLoading(false);
-            }
-          }
+          const clean = (prods || []).filter(p => !isDemoProduct(p)).map(sanitizeProduct);
+          setProducts(clean);
+          setLoading(false);
         });
 
         unsubOrders = subscribeToOrders((ords) => {

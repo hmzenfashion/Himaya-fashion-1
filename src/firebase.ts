@@ -61,6 +61,7 @@ export function isDemoProduct(product: any): boolean {
   // Explicit demo product IDs
   if (['prod-1', 'prod-2', 'prod-3', 'prod-4', 'prod-5', 'prod-6'].includes(id)) return true;
   if (id.startsWith('prod-georgette-')) return true;
+  if (id.startsWith('himaya-prod-')) return true;
 
   // Explicit demo product titles
   const demoSubstrings = [
@@ -77,7 +78,11 @@ export function isDemoProduct(product: any): boolean {
     'luxury velvet three-piece',
     'premium georgette three-piece (প্রিমিয়াম জর্জেট থ্রি-পিস - ১)',
     'designer georgette party three-piece (ডিজাইনার জর্জেট থ্রি-পিস - ২)',
-    'embroidered georgette salwar kameez (স্টোন ওয়ার্ক জর্জেট থ্রি-পিস - ৩)'
+    'embroidered georgette salwar kameez (স্টোন ওয়ার্ক জর্জেট থ্রি-পিস - ৩)',
+    'হিমায়া এক্সক্লুসিভ জর্জেট থ্রি-পিস কালেকশন',
+    'রয়েল ব্রাইডাল এমব্রয়ডারি জর্জেট থ্রি-পিস',
+    'প্রিমিয়াম সিল্ক জামদানি শাড়ি কালেকশন',
+    'ডিজাইনার পার্টি গাউন ও থ্রি-পিস'
   ];
 
   if (demoSubstrings.some(sub => title.includes(sub))) return true;
@@ -249,18 +254,16 @@ export function getStoredProducts(): Product[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const clean = parsed.filter(p => !isDemoProduct(p));
-        if (clean.length > 0) {
-          if (clean.length !== parsed.length) {
-            saveStoredProducts(clean);
-          }
-          return clean;
+        if (clean.length !== parsed.length) {
+          saveStoredProducts(clean);
         }
+        return clean;
       }
     }
   } catch (e) {
     // ignore
   }
-  return initialProducts;
+  return [];
 }
 
 export function getStoredCustomProducts(): Product[] {
@@ -439,8 +442,6 @@ export function subscribeToProducts(
     onUpdate(localProds);
   }
 
-  if (isQuotaExhausted()) return () => {};
-
   const path = 'products';
   try {
     return onSnapshot(
@@ -453,39 +454,29 @@ export function subscribeToProducts(
             items.push(p);
           }
         });
-        if (items.length > 0) {
-          const currentLocal = getStoredProducts().filter(p => !isDemoProduct(p));
-          const remoteIds = new Set(items.map(p => p.id));
-          const localOnly = currentLocal.filter(p => !remoteIds.has(p.id) && !isDemoProduct(p));
-          const combined = [...items, ...localOnly];
 
-          combined.sort((a, b) => {
-            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
-            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
-            return timeB - timeA;
-          });
-          saveStoredProducts(combined);
-          markCacheFresh('products');
-          onUpdate(combined);
-        }
+        items.sort((a, b) => {
+          const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+          const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+          return timeB - timeA;
+        });
+
+        saveStoredProducts(items);
+        markCacheFresh('products');
+        onUpdate(items);
       },
       (error) => {
-        recordQuotaExceeded(error);
+        console.warn("Firestore products snapshot note:", error);
         if (onError) onError(error);
       }
     );
   } catch (err) {
-    recordQuotaExceeded(err);
+    console.warn("Firestore products subscribe error:", err);
     return () => {};
   }
 }
 
 export async function fetchProductsFromFirestore(): Promise<Product[]> {
-  const localProds = getStoredProducts().filter(p => !isDemoProduct(p));
-  if (isQuotaExhausted() || (isCacheFresh('products') && localProds.length > 0)) {
-    return localProds;
-  }
-
   const path = 'products';
   try {
     const snap = await getDocs(collection(db, path));
@@ -496,24 +487,20 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
         items.push(p);
       }
     });
-    if (items.length > 0) {
-      const remoteIds = new Set(items.map(p => p.id));
-      const localOnly = localProds.filter(p => !remoteIds.has(p.id) && !isDemoProduct(p));
-      const combined = [...items, ...localOnly];
 
-      combined.sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
-        return timeB - timeA;
-      });
-      saveStoredProducts(combined);
-      markCacheFresh('products');
-      return combined;
-    }
+    items.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a.id.match(/^prod-(\d+)/)?.[1] ? Number(a.id.match(/^prod-(\d+)/)![1]) : 0);
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b.id.match(/^prod-(\d+)/)?.[1] ? Number(b.id.match(/^prod-(\d+)/)![1]) : 0);
+      return timeB - timeA;
+    });
+
+    saveStoredProducts(items);
+    markCacheFresh('products');
+    return items;
   } catch (error) {
-    recordQuotaExceeded(error);
+    console.warn("Firestore fetchProductsFromFirestore:", error);
   }
-  return localProds;
+  return getStoredProducts().filter(p => !isDemoProduct(p));
 }
 
 export async function saveProductToFirestore(product: Product): Promise<void> {
