@@ -865,6 +865,8 @@ export default function App() {
           onDirectCheckout={handleDirectCheckout}
           isWishlisted={wishlist.some(w => w.id === selectedProduct.id)}
           onToggleWishlist={handleToggleWishlist}
+          allProducts={products}
+          onSelectProduct={handleSelectProduct}
         />
       )}
 

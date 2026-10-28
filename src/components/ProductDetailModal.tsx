@@ -3,7 +3,7 @@ import { Product } from '../types';
 import { 
   X, ShoppingBag, Heart, Shield, RefreshCw, Truck, Share2, Copy, Check, 
   MessageCircle, Zap, Eye, Maximize2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight,
-  Star, MessageSquare
+  Star, MessageSquare, Sparkles
 } from 'lucide-react';
 import { subscribeToReviews, saveReviewToFirestore } from '../firebase';
 
@@ -14,6 +14,8 @@ interface ProductDetailModalProps {
   onDirectCheckout?: (product: Product, size: string, color: string, qty: number, selectedImage?: string) => void;
   isWishlisted: boolean;
   onToggleWishlist: (product: Product) => void;
+  allProducts?: Product[];
+  onSelectProduct?: (product: Product) => void;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -23,7 +25,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onDirectCheckout,
   isWishlisted,
   onToggleWishlist,
+  allProducts = [],
+  onSelectProduct,
 }) => {
+  const modalScrollRef = React.useRef<HTMLDivElement>(null);
   const safeSizes = (product?.sizes && Array.isArray(product.sizes) && product.sizes.length > 0)
     ? product.sizes
     : ['Free Size'];
@@ -123,6 +128,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     : 0;
   const savings = hasDiscount ? (originalPriceNum - priceNum) : 0;
 
+  // Filter related products for bottom section ("product er upo click korle jeno nic diye aro product ase")
+  const relatedProducts = React.useMemo(() => {
+    if (!allProducts || allProducts.length === 0) return [];
+    const otherProducts = allProducts.filter(p => p && p.id !== product.id);
+    const sameCategory = otherProducts.filter(p => p.category === product.category);
+    if (sameCategory.length >= 4) {
+      return sameCategory.slice(0, 8);
+    }
+    return otherProducts.slice(0, 8);
+  }, [allProducts, product.id, product.category]);
+
   // Generate unique product share link
   const shareUrl = typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}?product=${product.id}`
@@ -193,7 +209,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
         <div 
-          className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-y-auto md:overflow-hidden flex flex-col md:flex-row max-h-[94vh] md:max-h-[90vh]"
+          ref={modalScrollRef}
+          className="relative w-full max-w-5xl bg-white rounded-2xl shadow-2xl overflow-y-auto max-h-[94vh] md:max-h-[90vh] flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
@@ -205,7 +222,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <X className="w-5 h-5" />
           </button>
 
-          {/* Product Image & Gallery Thumbnails */}
+          {/* Two Column Layout for Main Product Details */}
+          <div className="flex flex-col md:flex-row w-full">
+            {/* Product Image & Gallery Thumbnails */}
           <div className="w-full md:w-1/2 bg-[#F8F7F4] flex flex-col p-3 sm:p-6 border-b md:border-b-0 md:border-r border-[#E6E2DD] md:overflow-y-auto shrink-0">
             {/* Image Container with Full Photo View Option */}
             <div 
@@ -607,6 +626,80 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               </div>
             </div>
           </div>
+        </div>
+
+          {/* Related Products Section ("product er upo click korle jeno nic diye aro product ase") */}
+          {relatedProducts.length > 0 && (
+            <div className="w-full bg-[#FAF9F6] border-t border-[#E8E4DD] p-4 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-[#E6E2DD]">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-600 fill-amber-500" />
+                  <h3 className="text-base sm:text-lg font-bold text-[#1A1A1A] font-serif">
+                    আরও পছন্দের ও সম্পর্কিত কালেকশন
+                  </h3>
+                </div>
+                <span className="text-xs text-[#666] font-medium">
+                  {relatedProducts.length}টি পণ্য
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                {relatedProducts.map((relProd) => {
+                  const relPrice = typeof relProd.price === 'number' ? relProd.price : Number(relProd.price) || 0;
+                  const relOrigPrice = typeof relProd.originalPrice === 'number' ? relProd.originalPrice : (Number(relProd.originalPrice) || 0);
+                  const relHasDiscount = relOrigPrice > relPrice;
+
+                  return (
+                    <div
+                      key={relProd.id}
+                      onClick={() => {
+                        if (onSelectProduct) {
+                          onSelectProduct(relProd);
+                          if (modalScrollRef.current) {
+                            modalScrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                          }
+                        }
+                      }}
+                      className="group bg-white rounded-xl border border-[#E8E4DD] hover:border-[#C5A059] p-2 sm:p-2.5 transition-all shadow-2xs hover:shadow-md cursor-pointer flex flex-col justify-between"
+                    >
+                      <div className="aspect-[3/4] bg-[#F4F4F0] rounded-lg overflow-hidden relative mb-2">
+                        <img
+                          src={relProd.image}
+                          alt={relProd.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        {relHasDiscount && (
+                          <span className="absolute top-1 left-1 bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            ছাড়
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-semibold text-[#1A1A1A] line-clamp-1 group-hover:text-[#C5A059] transition-colors">
+                          {relProd.title}
+                        </h4>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-extrabold text-[#1A1A1A]">৳{relPrice}</span>
+                          {relHasDiscount && (
+                            <span className="text-[10px] text-slate-400 line-through">৳{relOrigPrice}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="mt-2.5 w-full py-1.5 bg-[#1A1A1A] group-hover:bg-[#C5A059] text-white text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>দেখুন</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
