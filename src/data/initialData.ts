@@ -21,7 +21,9 @@ export const initialBanners: BannerAd[] = [
   }
 ];
 
-export const initialProducts: Product[] = [];
+import realProductsData from './initialProducts.json';
+
+export const initialProducts: Product[] = (realProductsData as any[]) || [];
 
 export const initialAdConfig = {
   globalAdsEnabled: true,

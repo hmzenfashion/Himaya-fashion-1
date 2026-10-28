@@ -113,7 +113,7 @@ export default function App() {
         return prods.filter(p => !isDemoProduct(p)).map(sanitizeProduct);
       }
     } catch {}
-    return [];
+    return (initialProducts || []).map(sanitizeProduct);
   });
   const [banners, setBanners] = useState<BannerAd[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -191,7 +191,10 @@ export default function App() {
       // 2. Fetch from Express Backend API (costs ZERO Firestore read units)
       try {
         const [prodRes, bannerRes, orderRes, settingsRes, adsRes] = await Promise.all([
-          fetch('/api/products').catch(() => null),
+          fetch('/api/products')
+            .then(res => res.ok ? res : fetch('/products.json'))
+            .catch(() => fetch('/products.json'))
+            .catch(() => null),
           fetch('/api/banners').catch(() => null),
           fetch('/api/orders').catch(() => null),
           fetch('/api/settings').catch(() => null),
@@ -641,8 +644,18 @@ export default function App() {
         appButtonText={storeSettings?.appButtonText || "Download apps"}
       />
 
-      {/* Main Product Catalog Section */}
-      <main id="product-grid" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 w-full space-y-8">
+      {/* TOP POPULAR PRODUCTS (5 ITEMS, HIGHLIGHTED WITH LUXURY GOLD BORDER ON TOP) */}
+      <PopularProductsSection
+        products={allRealProducts}
+        onSelectProduct={handleSelectProduct}
+        onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
+        onDirectCheckout={handleDirectCheckout}
+        wishlist={wishlist}
+        onToggleWishlist={handleToggleWishlist}
+      />
+
+      {/* ALL PRODUCTS / COMPLETE CATALOG (UNDERNEATH POPULAR PRODUCTS) */}
+      <main id="product-grid" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-8">
         
         {/* Section Header & Filters */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-[#E6E2DD] pb-6">
@@ -912,6 +925,7 @@ export default function App() {
           onUpdateCoupons={(updated) => setCoupons(updated)}
           onUpdateStoreSettings={(newSettings) => setStoreSettings(newSettings)}
           onUpdateBanners={(newBanners) => setBanners(newBanners)}
+          onUpdateProducts={(newProds) => setProducts(newProds)}
           onDeleteProduct={(prodId) => setProducts(prev => prev.filter(p => p.id !== prodId))}
           onDeleteOrder={(orderId) => setOrders(prev => prev.filter(o => o.id !== orderId))}
           onRefreshData={fetchData}

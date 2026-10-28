@@ -36,7 +36,10 @@
     "deletedCategories": [
       "Traditional",
       "Dresses"
-    ]
+    ],
+    "telegramBotToken": "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA",
+    "telegramChatId": "6333005937",
+    "isTelegramNotificationsEnabled": true
   },
   "banners": [
     {

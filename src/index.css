@@ -30,3 +30,27 @@
   background: #b08d44;
 }
 
+/* Subtle tactile heartbeat scale animation */
+@keyframes heartbeat {
+  0% {
+    transform: scale(1);
+  }
+  14% {
+    transform: scale(1.35);
+  }
+  28% {
+    transform: scale(0.95);
+  }
+  42% {
+    transform: scale(1.2);
+  }
+  70% {
+    transform: scale(1);
+  }
+}
+
+.animate-heartbeat {
+  animation: heartbeat 0.65s cubic-bezier(0.215, 0.61, 0.355, 1) both;
+  transform-origin: center center;
+}
+

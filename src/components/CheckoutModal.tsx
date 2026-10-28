@@ -34,6 +34,7 @@ import {
   clearStoredCustomer,
   fetchCouponsFromFirestore
 } from '../firebase';
+import { sendTelegramOrderNotificationClient } from '../utils/telegramNotify';
 import {
   BANGLADESH_DIVISIONS,
   DISTRICTS_BY_DIVISION,
@@ -475,13 +476,19 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
         console.warn("Firestore order direct save warning:", err);
       });
 
-      // 2. Also register in local server
+      // 2. Dispatch photo and order notification to Telegram Bot immediately
+      // Works in all environments including static hosting like Netlify
+      sendTelegramOrderNotificationClient(orderData, storeSettings).catch(tErr => {
+        console.warn("Client Telegram dispatch notice:", tErr);
+      });
+
+      // 3. Also register in local server
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderData)
-      });
-      const data = await res.json().catch(() => ({ success: true, order: orderData }));
+      }).catch(() => null);
+      const data = res ? await res.json().catch(() => ({ success: true, order: orderData })) : { success: true, order: orderData };
 
       const finalizedOrder = data.order || orderData;
       setCompletedOrder(finalizedOrder);
@@ -493,16 +500,11 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
       } catch (e) {
         // ignore
       }
-
-      // Automatically launch WhatsApp with full order details, product pictures, and prices
-      try {
-        const waLink = getAdminWhatsAppLink(finalizedOrder);
-        window.open(waLink, '_blank');
-      } catch (waErr) {
-        console.warn("Could not automatically open WhatsApp window:", waErr);
-      }
     } catch (err) {
       console.error("Order submission failed, using client order", err);
+      // Guarantee Telegram notification with photo even if server call errored
+      sendTelegramOrderNotificationClient(orderData, storeSettings).catch(() => {});
+
       setCompletedOrder(orderData);
       onOrderSuccess(orderData);
       setShowAuthGate(false);
@@ -511,13 +513,6 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
         localStorage.setItem('himaya_has_ordered', 'true');
       } catch (e) {
         // ignore
-      }
-
-      try {
-        const waLink = getAdminWhatsAppLink(orderData);
-        window.open(waLink, '_blank');
-      } catch (waErr) {
-        console.warn("Could not automatically open WhatsApp window:", waErr);
       }
     } finally {
       setIsSubmitting(false);
@@ -723,119 +718,91 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
         {/* Modal Scrollable Content */}
         <div className="p-6 overflow-y-auto flex-1">
           {completedOrder ? (
-            /* Order Success View */
-            <div className="text-center py-6 space-y-4">
-              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3 animate-bounce">
-                <CheckCircle className="w-10 h-10" />
+            /* Order Success View - In-App Confirmation */
+            <div className="text-center py-4 sm:py-6 space-y-4 animate-fade-in">
+              <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner ring-8 ring-emerald-50">
+                <CheckCircle className="w-12 h-12 stroke-[2.5]" />
               </div>
-              <h3 className="font-serif text-2xl font-bold text-[#1A1A1A]">Order Confirmed!</h3>
+
+              <div>
+                <h3 className="font-serif text-2xl sm:text-3xl font-extrabold text-[#1A1A1A] tracking-tight">
+                  আপনার অর্ডার সফলভাবে কনফার্ম হয়েছে!
+                </h3>
+                <p className="text-xs sm:text-sm font-semibold text-emerald-700 mt-1">
+                  Order Confirmed Successfully &middot; আপনার অর্ডারটি গ্রহণ করা হয়েছে
+                </p>
+              </div>
 
               {completedOrder.isFirstOrder && (
-                <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-100 border border-amber-300 rounded-full text-xs font-bold text-amber-900 mx-auto shadow-xs">
+                <div className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-amber-50 border border-amber-300 rounded-full text-xs font-bold text-amber-900 mx-auto shadow-xs">
                   <Sparkles className="w-4 h-4 text-amber-600" />
-                  <span>🌟 ওয়েবসাইট থেকে আপনার প্রথম অর্ডার! অভিনন্দন!</span>
+                  <span>🌟 হিমায় ফ্যাশনে আপনার প্রথম অর্ডারের জন্য আন্তরিক ধন্যবাদ!</span>
                 </div>
               )}
 
-              <p className="text-xs text-[#666] max-w-md mx-auto">
-                ধন্যবাদ, <span className="font-bold text-[#1A1A1A]">{completedOrder.customerName}</span>। আপনার অর্ডারটি সফলভাবে গ্রহণ করা হয়েছে এবং অ্যাডমিনকে হোয়াটসঅ্যাপে নোটিফিকেশন প্রস্তুত করা হয়েছে।
-              </p>
-
-              {/* WhatsApp Order Dispatch Card */}
-              <div className="bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl p-4 max-w-md mx-auto text-left space-y-3 shadow-sm">
-                <div className="flex items-center justify-between">
+              {/* Order ID & Reassurance Box */}
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 max-w-lg mx-auto text-left space-y-2.5 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-emerald-200/70">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                      <MessageCircle className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-emerald-950">অ্যাডমিন হোয়াটসঅ্যাপে তাৎক্ষণিক নোটিফিকেশন</div>
-                      <div className="text-[11px] text-emerald-700">পণ্যের ছবি, সাইজ, কালার ও দাম সহ পূর্ণাঙ্গ তথ্য</div>
-                    </div>
+                    <span className="text-xs font-semibold text-emerald-900">অর্ডার আইডি:</span>
+                    <span className="font-mono text-sm font-black text-emerald-950 bg-white px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                      #{completedOrder.id}
+                    </span>
                   </div>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded-full text-[10px] font-extrabold uppercase">
-                    {completedOrder.isFirstOrder ? '1st Order' : 'Order Ready'}
-                  </span>
-                </div>
-
-                <p className="text-[11px] text-emerald-800 leading-relaxed bg-white/80 p-2.5 rounded-xl border border-emerald-100">
-                  অর্ডারের বিস্তারিত তথ্য অ্যাডমিনের হোয়াটসঅ্যাপে <strong>({(storeSettings?.whatsappNumber || '01712-345678')})</strong> পাঠানো হচ্ছে। নিচে ক্লিক করে আপনিও সরাসরি অ্যাডমিনের সাথে হোয়াটসঅ্যাপ চ্যাটে অর্ডার নিশ্চিত করতে পারেন:
-                </p>
-
-                <div className="flex flex-col gap-2 pt-1">
-                  <a
-                    href={getAdminWhatsAppLink(completedOrder)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer text-center"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        navigator.clipboard.writeText(completedOrder.id);
+                        setCopiedType('whatsapp'); // reuse copy feedback state
+                        setTimeout(() => setCopiedType(null), 2000);
+                      } catch (e) {
+                        console.warn("Copy error", e);
+                      }
+                    }}
+                    className="text-[11px] font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 bg-white hover:bg-emerald-100 px-2.5 py-1 rounded-md border border-emerald-200 transition-colors cursor-pointer"
                   >
-                    <MessageCircle className="w-4 h-4" />
-                    <span>হোয়াটসঅ্যাপে নোটিফিকেশন পাঠান (Send WhatsApp)</span>
-                    <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-                  </a>
-
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        try {
-                          navigator.clipboard.writeText(generateWhatsAppMessage(completedOrder));
-                          setCopiedType('whatsapp');
-                          setTimeout(() => setCopiedType(null), 2500);
-                        } catch (e) {
-                          console.warn("Clipboard copy failed:", e);
-                        }
-                      }}
-                      className="flex-1 py-2.5 px-3 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      {copiedType === 'whatsapp' ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span className="font-bold text-emerald-700">কপি হয়েছে!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>মেসেজ কপি করুন</span>
-                        </>
-                      )}
-                    </button>
-
-                    {completedOrder.phone && (
-                      <a
-                        href={getCustomerWhatsAppLink(completedOrder)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 py-2.5 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
-                      >
-                        <Share2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>আমার হোয়াটসঅ্যাপে রসিদ</span>
-                      </a>
+                    {copiedType === 'whatsapp' ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        <span>আইডি কপি হয়েছে</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>আইডি কপি</span>
+                      </>
                     )}
-                  </div>
+                  </button>
                 </div>
+
+                <p className="text-xs text-emerald-900 leading-relaxed">
+                  ধন্যবাদ, <strong className="font-bold text-[#1A1A1A]">{completedOrder.customerName}</strong>! আপনার অর্ডারটি নিশ্চিত করা হয়েছে। খুব শীঘ্রই আমাদের কাস্টমার সাপোর্ট টিম থেকে ফোন দিয়ে আপনার সাথে যোগাযোগ করে পার্সেলটি ডেলিভারির জন্য পাঠানো হবে।
+                </p>
               </div>
 
-              {/* Ordered items */}
-              <div className="bg-[#FAF9F6] p-4 rounded-xl border border-[#E6E2DD] max-w-md mx-auto text-left space-y-2.5">
-                <div className="text-xs font-bold text-slate-800 border-b pb-2 flex justify-between">
-                  <span>Ordered Items ({completedOrder.items?.length || 0})</span>
-                  <span className="font-mono text-[11px] text-slate-500">#{completedOrder.id}</span>
+              {/* Ordered items breakdown */}
+              <div className="bg-[#FAF9F6] p-4 rounded-2xl border border-[#E6E2DD] max-w-lg mx-auto text-left space-y-2.5 shadow-xs">
+                <div className="text-xs font-bold text-slate-800 border-b border-[#E6E2DD] pb-2 flex justify-between items-center">
+                  <span>অর্ডারকৃত পণ্যসমূহ ({completedOrder.items?.length || 0} টি)</span>
+                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    স্ট্যাটাস: পেন্ডিং কনফার্মড
+                  </span>
                 </div>
-                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                   {completedOrder.items?.map((item, idx) => (
-                    <div key={`${item.id}-${idx}`} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-slate-100">
+                    <div key={`${item.id}-${idx}`} className="flex items-center gap-3 p-2 bg-white rounded-xl border border-slate-200/80">
                       {item.image && (
-                        <img src={item.image} alt={item.title} className="w-12 h-14 object-cover rounded-md border border-slate-200" />
+                        <img src={item.image} alt={item.title} className="w-12 h-14 object-cover rounded-lg border border-slate-200 shrink-0" />
                       )}
-                      <div className="flex-1 text-xs">
-                        <div className="font-semibold text-slate-900 line-clamp-1">{item.title}</div>
-                        <div className="text-[11px] text-slate-500 flex gap-2 mt-0.5">
-                          <span>রং: <strong className="text-slate-800">{item.color}</strong></span>
-                          <span>সাইজ: <strong className="text-slate-800">{item.size}</strong></span>
-                          <span>পরিমাণ: <strong className="text-slate-800">{item.quantity}</strong></span>
+                      <div className="flex-1 text-xs min-w-0">
+                        <div className="font-bold text-slate-900 truncate">{item.title}</div>
+                        <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                          <span>কালার: <strong className="text-slate-800">{item.color || 'ডিফল্ট'}</strong></span>
+                          <span>সাইজ: <strong className="text-slate-800">{item.size || 'ফ্রি সাইজ'}</strong></span>
+                          <span>পরিমাণ: <strong className="text-slate-800">{item.quantity} পিস</strong></span>
                         </div>
-                        <div className="text-[11px] font-bold text-[#C5A059] mt-0.5">
+                        <div className="text-xs font-extrabold text-[#C5A059] mt-0.5">
                           ৳{(item.price * item.quantity).toFixed(2)}
                         </div>
                       </div>
@@ -845,61 +812,117 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
               </div>
 
               {/* Order Details Receipt */}
-              <div className="bg-[#FAF9F6] p-4 rounded-xl border border-[#E6E2DD] max-w-md mx-auto text-left space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-[#666]">Recipient:</span>
-                  <span className="font-semibold text-[#1A1A1A]">{completedOrder.customerName}</span>
+              <div className="bg-[#FAF9F6] p-4 rounded-2xl border border-[#E6E2DD] max-w-lg mx-auto text-left space-y-2 text-xs shadow-xs">
+                <div className="text-xs font-bold text-slate-800 border-b border-[#E6E2DD] pb-2">
+                  ডেলিভারি ও পেমেন্ট বিবরণী
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#666]">Phone:</span>
-                  <span className="font-semibold text-[#1A1A1A] font-mono">{completedOrder.phone}</span>
+                  <span className="text-[#666]">গ্রাহকের নাম:</span>
+                  <span className="font-bold text-[#1A1A1A]">{completedOrder.customerName}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#666]">Shipping Location:</span>
-                  <span className="font-semibold text-[#1A1A1A] text-right">
-                    {completedOrder.thana || completedOrder.city}, {completedOrder.district || ''}
+                  <span className="text-[#666]">মোবাইল নম্বর:</span>
+                  <span className="font-bold text-[#1A1A1A] font-mono">{completedOrder.phone}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#666]">ঠিকানা:</span>
+                  <span className="font-medium text-[#1A1A1A] text-right max-w-xs">{completedOrder.address}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#666]">থানা ও জেলা:</span>
+                  <span className="font-medium text-[#1A1A1A] text-right">
+                    {completedOrder.thana || completedOrder.city}, {completedOrder.district || ''} {completedOrder.division ? `(${completedOrder.division})` : ''}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#666]">Street Address:</span>
-                  <span className="font-semibold text-[#1A1A1A] text-right max-w-xs">{completedOrder.address}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#666]">Delivery Area:</span>
-                  <span className="font-semibold text-emerald-700">
-                    {completedOrder.deliveryArea || 'Inside Dhaka'} (৳{completedOrder.deliveryCharge || 80})
+                  <span className="text-[#666]">ডেলিভারি এরিয়া:</span>
+                  <span className="font-semibold text-emerald-800">
+                    {completedOrder.deliveryArea || 'Inside Dhaka'} (চার্জ: ৳{completedOrder.deliveryCharge || 80})
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#666]">Payment Method:</span>
-                  <span className="font-semibold text-[#1A1A1A] uppercase">
-                    {completedOrder.paymentMethod || 'COD'}
+                  <span className="text-[#666]">পেমেন্ট পদ্ধতি:</span>
+                  <span className="font-bold text-[#1A1A1A]">
+                    {completedOrder.paymentMethod === 'bkash' 
+                      ? 'বিকাশ (bKash)' 
+                      : completedOrder.paymentMethod === 'nagad' 
+                      ? 'নগদ (Nagad)' 
+                      : 'ক্যাশ অন ডেলিভারি (Cash on Delivery)'}
                   </span>
                 </div>
                 {completedOrder.paymentTrxId && (
                   <div className="flex justify-between">
-                    <span className="text-[#666]">TrxID:</span>
+                    <span className="text-[#666]">TrxID / ট্রানজেকশন নম্বর:</span>
                     <span className="font-mono font-bold text-pink-600">{completedOrder.paymentTrxId}</span>
                   </div>
                 )}
                 {completedOrder.couponCode && completedOrder.discountAmount && (
                   <div className="flex justify-between text-emerald-700 font-medium">
-                    <span>Coupon Discount ({completedOrder.couponCode}):</span>
+                    <span>কুপন ডিসকাউন্ট ({completedOrder.couponCode}):</span>
                     <span className="font-bold">-৳{completedOrder.discountAmount.toFixed(2)}</span>
                   </div>
                 )}
-                <div className="flex justify-between pt-2 border-t border-[#E6E2DD]">
-                  <span className="text-[#1A1A1A] font-bold">Total Amount Payable:</span>
-                  <span className="font-bold text-sm text-[#C5A059]">৳{completedOrder.totalAmount.toFixed(2)}</span>
+                <div className="flex justify-between pt-2 border-t border-[#E6E2DD] text-sm">
+                  <span className="text-[#1A1A1A] font-bold">সর্বমোট প্রদেয় টাকা:</span>
+                  <span className="font-extrabold text-base text-[#C5A059]">৳{completedOrder.totalAmount.toFixed(2)}</span>
                 </div>
               </div>
 
-              <button
-                onClick={onClose}
-                className="px-8 py-3 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-semibold tracking-wider uppercase rounded-xl transition-all shadow-md cursor-pointer"
-              >
-                Continue Shopping
-              </button>
+              {/* Optional Support Contact (Non-intrusive) */}
+              <div className="max-w-lg mx-auto bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 text-left space-y-2">
+                <div className="text-[11px] font-bold text-slate-700">
+                  কোনো প্রশ্ন বা সাহায্য প্রয়োজন হলে আমাদের সাথে যোগাযোগ করতে পারেন:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={getAdminWhatsAppLink(completedOrder)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>হোয়াটসঅ্যাপে হেল্পলাইন</span>
+                    <ExternalLink className="w-3 h-3 opacity-80" />
+                  </a>
+
+                  <a
+                    href={`tel:${storeSettings?.contactPhone || '01712345678'}`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5 text-slate-600" />
+                    <span>কল করুন: {storeSettings?.contactPhone || '01712-345678'}</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        navigator.clipboard.writeText(generateWhatsAppMessage(completedOrder));
+                        setCopiedType('whatsapp');
+                        setTimeout(() => setCopiedType(null), 2500);
+                      } catch (e) {
+                        console.warn("Clipboard copy failed:", e);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-xs font-medium transition-colors cursor-pointer ml-auto"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{copiedType === 'whatsapp' ? 'রশিদ কপি হয়েছে!' : 'রশিদ কপি'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Primary Action Button: Continue Shopping */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full max-w-lg mx-auto py-3.5 px-6 bg-[#1A1A1A] hover:bg-[#C5A059] text-white text-xs font-bold tracking-wider uppercase rounded-xl transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>শপিং চালিয়ে যান (Continue Shopping)</span>
+                </button>
+              </div>
             </div>
           ) : (
             /* Checkout Form with Empty Start & Bangladesh Locations */
@@ -1533,7 +1556,7 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
                   সাইন ইন বা রেজিস্টার করুন
                 </h4>
                 <p className="text-xs text-slate-600 max-w-xs mx-auto">
-                  আপনার মোট <strong className="text-slate-900">৳{total.toFixed(2)}</strong> এর অর্ডারটি সম্পন্ন করতে অ্যাকাউন্টে লগইন করুন। অর্ডার প্লেস হওয়ামাত্রই হোয়াটসঅ্যাপে তাৎক্ষণিক নোটিফিকেশন পাঠানো হবে।
+                  আপনার মোট <strong className="text-slate-900">৳{total.toFixed(2)}</strong> এর অর্ডারটি সম্পন্ন করতে অ্যাকাউন্টে লগইন করুন। অর্ডার কনফার্ম হওয়ামাত্রই আপনার অর্ডার নিশ্চিতকরণ রসিদ দেখতে পাবেন।
                 </p>
               </div>
 

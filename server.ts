@@ -106,6 +106,9 @@ interface StoreSettings {
   appDownloadNotes?: string;
   appButtonText?: string;
   isAppDownloadEnabled?: boolean;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  isTelegramNotificationsEnabled?: boolean;
 }
 
 export interface CouponItem {
@@ -174,7 +177,10 @@ const defaultSettings: StoreSettings = {
   appApkSize: "16.8 MB",
   appDownloadNotes: "Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.",
   appButtonText: "Download apps",
-  isAppDownloadEnabled: true
+  isAppDownloadEnabled: true,
+  telegramBotToken: "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA",
+  telegramChatId: "6333005937",
+  isTelegramNotificationsEnabled: true
 };
 
 const initialData: StoreData = {
@@ -622,7 +628,342 @@ app.post("/api/orders", (req, res) => {
   };
   data.orders.unshift(newOrder);
   saveStoreData(data);
+
+  // Trigger real-time Telegram Bot notification in background
+  sendTelegramOrderNotification(newOrder).catch(err => {
+    console.warn("Background Telegram notification error:", err);
+  });
+
   res.json({ success: true, order: newOrder });
+});
+
+function escapeTelegramHtml(unsafe?: string): string {
+  if (!unsafe) return '';
+  return String(unsafe)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+async function sendTelegramOrderNotification(order: Order, customSettings?: StoreSettings) {
+  try {
+    const data = getStoreData();
+    const settings = customSettings || data.settings || defaultSettings;
+    const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA";
+    const botToken = (rawToken || "").replace(/\s+/g, '').trim();
+    const chatId = (settings.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
+
+    if (!botToken || !chatId) {
+      console.log("ℹ️ Telegram bot token or chat ID is not set yet. Skipping Telegram alert.");
+      return { success: false, reason: "Bot Token or Chat ID missing" };
+    }
+
+    if (settings.isTelegramNotificationsEnabled === false) {
+      console.log("ℹ️ Telegram notifications are currently disabled in settings.");
+      return { success: false, reason: "Notifications disabled in settings" };
+    }
+
+    const orderTime = new Date(order.createdAt || Date.now()).toLocaleString('bn-BD', {
+      timeZone: 'Asia/Dhaka',
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    });
+
+    const isFirst = order.isFirstOrder ?? true;
+
+    // Extract primary product picture
+    let primaryImage = '';
+    for (const item of (order.items || [])) {
+      if (item.image && typeof item.image === 'string' && item.image.trim()) {
+        primaryImage = item.image.trim();
+        break;
+      }
+    }
+
+    const itemsList = (order.items || []).map((item, idx) => {
+      let t = `<b>${idx + 1}. ${escapeTelegramHtml(item.title)}</b>\n`;
+      t += `   • সাইজ: <code>${escapeTelegramHtml(item.size || 'Free Size')}</code> | কালার: <code>${escapeTelegramHtml(item.color || 'Default')}</code>\n`;
+      t += `   • পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${(item.price * item.quantity).toFixed(2)}</b>`;
+      return t;
+    }).join('\n');
+
+    const paymentText = order.paymentMethod === 'bkash'
+      ? `বিকাশ (bKash)${order.paymentTrxId ? ` | TrxID: <code>${escapeTelegramHtml(order.paymentTrxId)}</code> (প্রেরক: <code>${escapeTelegramHtml(order.paymentSenderPhone || '')}</code>)` : ''}`
+      : order.paymentMethod === 'nagad'
+      ? `নগদ (Nagad)${order.paymentTrxId ? ` | TrxID: <code>${escapeTelegramHtml(order.paymentTrxId)}</code> (প্রেরক: <code>${escapeTelegramHtml(order.paymentSenderPhone || '')}</code>)` : ''}`
+      : 'ক্যাশ অন ডেলিভারি (Cash on Delivery)';
+
+    const discountText = (order.discountAmount && order.discountAmount > 0)
+      ? `🎟️ <b>কুপন ডিসকাউন্ট (${escapeTelegramHtml(order.couponCode || 'PROMO')}):</b> -৳${order.discountAmount.toFixed(2)}\n`
+      : '';
+
+    const itemsSubtotal = (order.totalAmount - (order.deliveryCharge || 0) + (order.discountAmount || 0));
+
+    const headerHtml =
+      `🛍️ <b>নতুন অর্ডার নোটিফিকেশন — হিমায়া ফ্যাশন</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `📦 <b>অর্ডার আইডি:</b> <code>#${escapeTelegramHtml(order.id)}</code>\n` +
+      `📅 <b>সময়:</b> ${orderTime}\n` +
+      `${isFirst ? '⭐ <i>ওয়েবসাইটে গ্রাহকের প্রথম অর্ডার!</i>\n' : ''}` +
+      `\n👤 <b>গ্রাহকের তথ্য:</b>\n` +
+      `• নাম: <b>${escapeTelegramHtml(order.customerName)}</b>\n` +
+      `• ফোন: <code>${escapeTelegramHtml(order.phone)}</code>\n` +
+      (order.email ? `• ইমেইল: ${escapeTelegramHtml(order.email)}\n` : '') +
+      `\n📍 <b>ডেলিভারি ঠিকানা:</b>\n` +
+      `• ঠিকানা: ${escapeTelegramHtml(order.address)}\n` +
+      `• এলাকা/উপজেলা: ${escapeTelegramHtml([order.thana, order.district].filter(Boolean).join(', ') || order.city || 'N/A')}\n` +
+      `• ডেলিভারি জোন: ${escapeTelegramHtml(order.deliveryArea || 'Inside Dhaka')} (চার্জ: ৳${order.deliveryCharge || 80})\n` +
+      `\n👗 <b>অর্ডারকৃত পণ্যসমূহ (${order.items?.length || 0}টি):</b>\n`;
+
+    const footerHtml =
+      `\n━━━━━━━━━━━━━━━━━━━━\n` +
+      `💳 <b>পেমেন্ট পদ্ধতি:</b> ${paymentText}\n` +
+      `💰 <b>পণ্যের মূল্য:</b> ৳${itemsSubtotal.toFixed(2)}\n` +
+      `${discountText}` +
+      `🚚 <b>ডেলিভারি চার্জ:</b> ৳${(order.deliveryCharge || 0).toFixed(2)}\n` +
+      `✨ <b>সর্বমোট প্রদেয় টাকা:</b> <b>৳${order.totalAmount.toFixed(2)}</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `💎 <b>হিমায়া ফ্যাশন (Himaya Fashion BD)</b>`;
+
+    // Customer WhatsApp action buttons
+    const rawPhone = (order.phone || '').replace(/[^0-9]/g, '');
+    let waPhone = rawPhone;
+    if (waPhone.startsWith('0')) waPhone = '88' + waPhone;
+    else if (!waPhone.startsWith('880') && waPhone.length === 10) waPhone = '880' + waPhone;
+
+    const inlineKeyboard: any[] = [];
+    const buttonRow: any[] = [];
+    if (waPhone) {
+      buttonRow.push({
+        text: '💬 হোয়াটসঅ্যাপে চ্যাট করুন',
+        url: `https://wa.me/${waPhone}`
+      });
+    }
+    buttonRow.push({
+      text: '🌐 ওয়েবসাইট ভিজিট',
+      url: 'https://himayafashion.netlify.app'
+    });
+    inlineKeyboard.push(buttonRow);
+    const replyMarkup = { inline_keyboard: inlineKeyboard };
+
+    const fullMessageHtml = `${headerHtml}${itemsList}${footerHtml}`;
+    let captionHtml = fullMessageHtml;
+    if (captionHtml.length > 1000) {
+      const truncatedItems = (order.items || []).slice(0, 2).map((item, idx) => 
+        `<b>${idx + 1}. ${escapeTelegramHtml(item.title)}</b> (${item.quantity}টি - ৳${item.price})`
+      ).join('\n') + `\n<i>...এবং আরও ${(order.items || []).length - 2}টি পণ্য</i>`;
+      captionHtml = `${headerHtml}${truncatedItems}${footerHtml}`;
+      if (captionHtml.length > 1000) {
+        captionHtml = captionHtml.substring(0, 995) + '...';
+      }
+    }
+
+    // Try to send with photo if available
+    if (primaryImage) {
+      try {
+        // Option 1: Remote HTTP/HTTPS URL
+        if (primaryImage.startsWith('http://') || primaryImage.startsWith('https://')) {
+          const photoUrl = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+          const photoRes = await fetch(photoUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              photo: primaryImage,
+              caption: captionHtml,
+              parse_mode: 'HTML',
+              reply_markup: replyMarkup
+            })
+          });
+          const photoData = await photoRes.json().catch(() => null);
+          if (photoRes.ok && photoData?.ok) {
+            console.log("✅ Telegram order alert sent with remote image URL for order:", order.id);
+            return { success: true, withPhoto: true, result: photoData };
+          } else {
+            console.warn("⚠️ Telegram sendPhoto via remote URL failed:", photoData?.description);
+          }
+        }
+        // Option 2: Base64 Data URL (data:image/...)
+        else if (primaryImage.startsWith('data:image/')) {
+          const base64Data = primaryImage.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          const formData = new FormData();
+          formData.append('chat_id', chatId);
+          formData.append('caption', captionHtml);
+          formData.append('parse_mode', 'HTML');
+          formData.append('reply_markup', JSON.stringify(replyMarkup));
+          const blob = new Blob([buffer], { type: 'image/jpeg' });
+          formData.append('photo', blob, 'product_image.jpg');
+
+          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            body: formData
+          });
+          const photoData = await photoRes.json().catch(() => null);
+          if (photoRes.ok && photoData?.ok) {
+            console.log("✅ Telegram order alert sent with base64 image for order:", order.id);
+            return { success: true, withPhoto: true, result: photoData };
+          } else {
+            console.warn("⚠️ Telegram sendPhoto with base64 failed:", photoData?.description);
+          }
+        }
+        // Option 3: Local file on disk
+        else {
+          const candidatePaths = [
+            path.join(process.cwd(), primaryImage),
+            path.join(process.cwd(), 'public', primaryImage),
+            path.join(UPLOADS_DIR, path.basename(primaryImage)),
+            path.join(DATA_DIR, primaryImage)
+          ];
+          let resolvedFilePath = '';
+          for (const p of candidatePaths) {
+            if (fs.existsSync(p)) {
+              resolvedFilePath = p;
+              break;
+            }
+          }
+          if (resolvedFilePath) {
+            const buffer = fs.readFileSync(resolvedFilePath);
+            const formData = new FormData();
+            formData.append('chat_id', chatId);
+            formData.append('caption', captionHtml);
+            formData.append('parse_mode', 'HTML');
+            formData.append('reply_markup', JSON.stringify(replyMarkup));
+            const blob = new Blob([buffer], { type: 'image/jpeg' });
+            formData.append('photo', blob, path.basename(resolvedFilePath));
+
+            const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+              method: 'POST',
+              body: formData
+            });
+            const photoData = await photoRes.json().catch(() => null);
+            if (photoRes.ok && photoData?.ok) {
+              console.log("✅ Telegram order alert sent with local file image for order:", order.id);
+              return { success: true, withPhoto: true, result: photoData };
+            }
+          }
+        }
+      } catch (photoErr) {
+        console.warn("⚠️ sendPhoto exception, falling back to sendMessage:", photoErr);
+      }
+    }
+
+    // Fallback: Send message as text
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: fullMessageHtml,
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup
+      })
+    });
+
+    const responseData = await response.json().catch(() => null);
+    if (!response.ok || !responseData?.ok) {
+      console.error("Telegram API Error:", responseData);
+      return { success: false, error: responseData?.description || 'Failed to send Telegram message' };
+    }
+
+    console.log("✅ Telegram order alert sent successfully for order:", order.id);
+    return { success: true, withPhoto: false, result: responseData };
+  } catch (err: any) {
+    console.error("Exception in sendTelegramOrderNotification:", err);
+    return { success: false, error: err.message || 'Telegram notification failed' };
+  }
+}
+
+// Telegram Manual Dispatch API
+app.post("/api/notify-telegram", async (req, res) => {
+  try {
+    const order = req.body.order;
+    if (!order) {
+      return res.status(400).json({ error: "Order details required" });
+    }
+    const result = await sendTelegramOrderNotification(order);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to notify telegram" });
+  }
+});
+
+// Telegram Test Alert API (Sends sample order with product photo)
+app.post("/api/telegram/test", async (req, res) => {
+  try {
+    const { botToken, chatId } = req.body;
+    const data = getStoreData();
+    const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA";
+    const token = (rawToken || "").replace(/\s+/g, '').trim();
+    const chat = (chatId || data.settings?.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
+
+    if (!token || !chat) {
+      return res.status(400).json({
+        success: false,
+        error: "Bot Token এবং Chat ID দুটোই প্রয়োজন। অনুগ্রহ করে ফিল্ডগুলো পূরণ করুন।"
+      });
+    }
+
+    const testOrder: Order = {
+      id: "TEST-" + Math.floor(1000 + Math.random() * 9000),
+      customerName: "পরীক্ষামূলক গ্রাহক (Test Customer)",
+      email: "test@himayafashion.com",
+      phone: "01832350726",
+      division: "ঢাকা (Dhaka)",
+      district: "ঢাকা (Dhaka)",
+      thana: "ধানমন্ডি (Dhanmondi)",
+      address: "বাড়ি #১২, রোড #৪, ধানমন্ডি, ঢাকা",
+      city: "ধানমন্ডি, ঢাকা",
+      deliveryArea: "Inside Dhaka",
+      deliveryCharge: 80,
+      items: [
+        {
+          id: "prod-sample-1",
+          title: "রয়েল ব্রাইডাল এমব্রয়ডারি ড্রেস (Royal Bridal Embroidery)",
+          price: 3150,
+          quantity: 1,
+          size: "XL",
+          color: "Deep Crimson",
+          image: "https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=800"
+        }
+      ],
+      totalAmount: 3230,
+      status: "Pending",
+      createdAt: new Date().toISOString(),
+      paymentMethod: "bkash",
+      paymentSenderPhone: "01832350726",
+      paymentTrxId: "TRX" + Math.floor(100000 + Math.random() * 900000),
+      isFirstOrder: true
+    };
+
+    const tempSettings: StoreSettings = {
+      ...(data.settings || defaultSettings),
+      telegramBotToken: token,
+      telegramChatId: chat,
+      isTelegramNotificationsEnabled: true
+    };
+
+    const result = await sendTelegramOrderNotification(testOrder, tempSettings);
+    if (result.success) {
+      return res.json({
+        success: true,
+        withPhoto: result.withPhoto,
+        message: result.withPhoto
+          ? "টেলিগ্রামে প্রোডাক্টের ছবিসহ টেস্ট অর্ডার নোটিফিকেশন সফলভাবে পাঠানো হয়েছে! আপনার টেলিগ্রাম চেক করুন।"
+          : "টেলিগ্রামে টেস্ট অর্ডার নোটিফিকেশন সফলভাবে পাঠানো হয়েছে! আপনার টেলিগ্রাম চেক করুন।"
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: result.error || "টেলিগ্রামে মেসেজ পাঠানো যায়নি। দয়া করে Bot Token ও Chat ID ঠিক আছে কিনা যাচাই করুন।"
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || "সার্ভার এরর"
+    });
+  }
 });
 
 app.put("/api/orders/:id", (req, res) => {

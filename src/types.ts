@@ -127,6 +127,10 @@ export interface StoreSettings {
   appButtonText?: string; // e.g. "Download apps"
   isAppDownloadEnabled?: boolean;
   coupons?: CouponItem[];
+  // Telegram Bot Order Notifications
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  isTelegramNotificationsEnabled?: boolean;
 }
 
 export type AdType = 'popunder' | 'script_banner' | 'direct_link' | 'custom_html';

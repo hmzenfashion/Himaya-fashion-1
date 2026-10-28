@@ -39,6 +39,15 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [viewerZoom, setViewerZoom] = useState(1);
+  const [isHeartAnimating, setIsHeartAnimating] = useState(false);
+
+  const handleToggleWishlist = () => {
+    if (!isWishlisted) {
+      setIsHeartAnimating(true);
+      setTimeout(() => setIsHeartAnimating(false), 700);
+    }
+    onToggleWishlist(product);
+  };
 
   // Customer Reviews state & Firestore subscription
   const [reviews, setReviews] = useState<any[]>([]);
@@ -287,13 +296,13 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     {copiedLink ? <Check className="w-4 h-4 text-emerald-600" /> : <Share2 className="w-4 h-4" />}
                   </button>
                   <button
-                    onClick={() => onToggleWishlist(product)}
-                    className={`p-2 rounded-full border border-[#E6E2DD] transition-colors cursor-pointer ${
-                      isWishlisted ? 'bg-[#C5A059] text-white border-[#C5A059]' : 'text-[#1A1A1A] hover:bg-[#FAF9F6]'
-                    }`}
-                    title="Wishlist"
+                    onClick={handleToggleWishlist}
+                    className={`p-2 rounded-full border transition-all cursor-pointer ${
+                      isWishlisted ? 'bg-[#C5A059] text-white border-[#C5A059]' : 'border-[#E6E2DD] text-[#1A1A1A] hover:bg-[#FAF9F6]'
+                    } ${isHeartAnimating ? 'animate-heartbeat ring-2 ring-[#C5A059]/50 shadow-md' : 'active:scale-95'}`}
+                    title={isWishlisted ? "Wishlist থেকে সরান" : "Add to Wishlist"}
                   >
-                    <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-current' : ''}`} />
+                    <Heart className={`w-4 h-4 transition-transform ${isWishlisted ? 'fill-current' : ''} ${isHeartAnimating ? 'animate-heartbeat' : ''}`} />
                   </button>
                 </div>
               </div>

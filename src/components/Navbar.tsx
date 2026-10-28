@@ -52,6 +52,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [wishlistPulse, setWishlistPulse] = useState(false);
+  const prevWishlistCountRef = React.useRef(wishlistCount);
+
+  React.useEffect(() => {
+    if (wishlistCount > prevWishlistCountRef.current) {
+      setWishlistPulse(true);
+      const timer = setTimeout(() => setWishlistPulse(false), 700);
+      prevWishlistCountRef.current = wishlistCount;
+      return () => clearTimeout(timer);
+    }
+    prevWishlistCountRef.current = wishlistCount;
+  }, [wishlistCount]);
 
   const appButtonLabel = settings?.appButtonText || "Download apps";
 
@@ -166,9 +178,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="relative p-2 text-[#1A1A1A] hover:text-[#C5A059] transition-colors"
               title="Wishlist"
             >
-              <Heart className="w-5 h-5" />
+              <Heart className={`w-5 h-5 transition-transform ${wishlistPulse ? 'animate-heartbeat text-[#C5A059] fill-[#C5A059]' : ''}`} />
               {wishlistCount > 0 && (
-                <span className="absolute top-1 right-1 bg-[#C5A059] text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                <span className={`absolute top-1 right-1 bg-[#C5A059] text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold shadow-xs ${wishlistPulse ? 'animate-heartbeat scale-110' : ''}`}>
                   {wishlistCount}
                 </span>
               )}

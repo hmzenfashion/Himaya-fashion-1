@@ -254,16 +254,15 @@ export function getStoredProducts(): Product[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const clean = parsed.filter(p => !isDemoProduct(p));
-        if (clean.length !== parsed.length) {
-          saveStoredProducts(clean);
+        if (clean.length > 0) {
+          return clean;
         }
-        return clean;
       }
     }
   } catch (e) {
     // ignore
   }
-  return [];
+  return initialProducts;
 }
 
 export function getStoredCustomProducts(): Product[] {

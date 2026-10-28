@@ -49,7 +49,9 @@ import {
   Archive,
   MessageCircle,
   Pin,
-  Flame
+  Flame,
+  Send,
+  Bot
 } from 'lucide-react';
 import { 
   saveProductToFirestore, 
@@ -68,6 +70,7 @@ import {
   deleteCouponFromFirestore,
   DEFAULT_ADMIN_EMAILS
 } from '../firebase';
+import { sendTelegramOrderNotificationClient } from '../utils/telegramNotify';
 import { initialAdConfig } from '../data/initialData';
 
 // Curated high quality fashion photos for 1-click selection from Admin Panel
@@ -530,7 +533,8 @@ type AdminTab =
   | 'ads_promos' 
   | 'reviews' 
   | 'settings'
-  | 'app_install';
+  | 'app_install'
+  | 'telegram_bot';
 
 interface CouponItem {
   id: string;
@@ -588,6 +592,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   orders,
   coupons: initialCoupons = [],
   onUpdateCoupons,
+  onUpdateProducts,
   onRefreshData,
   onOpenFirebaseGuide,
   currentUser,
@@ -676,9 +681,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     appApkSize: storeSettings?.appApkSize || '16.8 MB',
     appDownloadNotes: storeSettings?.appDownloadNotes || 'Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.',
     appButtonText: storeSettings?.appButtonText || 'Download apps',
-    isAppDownloadEnabled: storeSettings?.isAppDownloadEnabled ?? true
+    isAppDownloadEnabled: storeSettings?.isAppDownloadEnabled ?? true,
+    telegramBotToken: storeSettings?.telegramBotToken || '8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA',
+    telegramChatId: storeSettings?.telegramChatId || '6333005937',
+    isTelegramNotificationsEnabled: storeSettings?.isTelegramNotificationsEnabled ?? true
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [isTestingTelegram, setIsTestingTelegram] = useState(false);
+  const [telegramTestResult, setTelegramTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showTelegramToken, setShowTelegramToken] = useState(false);
   const [isUploadingAppFile, setIsUploadingAppFile] = useState(false);
   const [appFileUploadProgress, setAppFileUploadProgress] = useState<string | null>(null);
   const [orderFilter, setOrderFilter] = useState<'all' | 'Pending' | 'Processing' | 'Shipped' | 'Delivered' | 'Cancelled' | 'archived'>('all');
@@ -773,7 +784,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         appApkSize: storeSettings.appApkSize || prev.appApkSize || '16.8 MB',
         appDownloadNotes: storeSettings.appDownloadNotes || prev.appDownloadNotes || '',
         appButtonText: storeSettings.appButtonText || prev.appButtonText || 'Download apps',
-        isAppDownloadEnabled: storeSettings.isAppDownloadEnabled ?? prev.isAppDownloadEnabled ?? true
+        isAppDownloadEnabled: storeSettings.isAppDownloadEnabled ?? prev.isAppDownloadEnabled ?? true,
+        telegramBotToken: storeSettings.telegramBotToken !== undefined ? storeSettings.telegramBotToken : (prev.telegramBotToken || ''),
+        telegramChatId: storeSettings.telegramChatId !== undefined ? storeSettings.telegramChatId : (prev.telegramChatId || ''),
+        isTelegramNotificationsEnabled: storeSettings.isTelegramNotificationsEnabled !== undefined ? storeSettings.isTelegramNotificationsEnabled : (prev.isTelegramNotificationsEnabled ?? true)
       }));
     }
   }, [storeSettings]);
@@ -801,7 +815,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     colors: 'Black, Maroon, Navy',
     stock: 12,
     featured: true,
-    isPinned: false
+    isPinned: false,
+    isPopular: false
   });
 
   // Gallery and upload state
@@ -1361,11 +1376,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     const targetId = editingProduct ? editingProduct.id : ("prod-" + Date.now());
     const createdAt = editingProduct?.createdAt || new Date().toISOString();
+    const isPopularVal = Boolean(productForm.isPopular || productForm.isPinned);
     const fullProduct: Product = {
       id: targetId,
       ...payload,
-      isPinned: Boolean(productForm.isPinned),
-      isPopular: Boolean(productForm.isPinned),
+      isPinned: isPopularVal,
+      isPopular: isPopularVal,
       createdAt
     };
 
@@ -1376,13 +1392,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       console.warn("Firestore product save:", e);
     }
 
+    let nextList: Product[];
     if (editingProduct) {
       await fetch(`/api/products/${editingProduct.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fullProduct)
       }).catch(() => {});
-      setLocalProducts(prev => prev.map(p => p.id === fullProduct.id ? fullProduct : p));
+      nextList = localProducts.map(p => p.id === fullProduct.id ? fullProduct : p);
+      setLocalProducts(nextList);
     } else {
       await fetch('/api/products', {
         method: 'POST',
@@ -1390,8 +1408,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         body: JSON.stringify(fullProduct)
       }).catch(() => {});
       // Prepend newest product directly at top of list
-      setLocalProducts(prev => [fullProduct, ...prev]);
+      nextList = [fullProduct, ...localProducts];
+      setLocalProducts(nextList);
     }
+
+    if (onUpdateProducts) {
+      onUpdateProducts(nextList);
+    }
+    try {
+      localStorage.setItem('himaya_products', JSON.stringify(nextList));
+      localStorage.setItem('himaya_products_cache', JSON.stringify(nextList));
+    } catch {}
 
     setEditingProduct(null);
     setIsAddingProduct(false);
@@ -1408,10 +1435,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       colors: 'Black, Maroon, Navy',
       stock: 12,
       featured: true,
-      isPinned: false
+      isPinned: false,
+      isPopular: false
     });
     setDiscountPercentInput('');
     onRefreshData();
+  };
+
+  const handleTogglePopular = async (prod: Product) => {
+    const isCurrentlyPopular = Boolean(prod.isPopular || prod.isPinned);
+    const newPopularState = !isCurrentlyPopular;
+
+    const updatedProduct: Product = {
+      ...prod,
+      isPopular: newPopularState,
+      isPinned: newPopularState
+    };
+
+    // 1. Optimistic update for local Admin list
+    const updatedList = localProducts.map(p => p.id === prod.id ? updatedProduct : p);
+    setLocalProducts(updatedList);
+
+    // 2. Synchronous update for Storefront (App.tsx)
+    if (onUpdateProducts) {
+      onUpdateProducts(updatedList);
+    }
+
+    // 3. Immediately persist in local storage cache
+    try {
+      localStorage.setItem('himaya_products', JSON.stringify(updatedList));
+      localStorage.setItem('himaya_products_cache', JSON.stringify(updatedList));
+    } catch {}
+
+    // 4. Save to Firestore
+    try {
+      await saveProductToFirestore(updatedProduct);
+      setToastMessage(newPopularState ? `🔥 "${prod.title}" পপুলার সেকশনে যুক্ত হয়েছে!` : `"${prod.title}" পপুলার তালিকা থেকে সরানো হয়েছে।`);
+    } catch (err) {
+      console.warn("Firestore popular toggle note:", err);
+    }
+
+    // 5. Server API sync
+    fetch(`/api/products/${prod.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedProduct)
+    }).catch(() => {});
+
+    // 6. Refresh parent data
+    if (onRefreshData) {
+      onRefreshData();
+    }
   };
 
   const handlePromptDeleteProduct = (product: Product) => {
@@ -1896,12 +1970,110 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (onUpdateStoreSettings) {
         onUpdateStoreSettings(localSettings);
       }
-      setToastMessage("বিকাশ, নগদ ও স্টোর সেটিংস সফলভাবে সেভ করা হয়েছে!");
+      setToastMessage("সেটিংস সফলভাবে সেভ করা হয়েছে!");
     } catch (err) {
       console.error("Failed to save settings:", err);
       setToastMessage("সেটিংস সেভ করতে সমস্যা হয়েছে!");
     } finally {
       setIsSavingSettings(false);
+    }
+  };
+
+  const handleTestTelegramAlert = async () => {
+    if (!localSettings.telegramBotToken?.trim() || !localSettings.telegramChatId?.trim()) {
+      setTelegramTestResult({
+        success: false,
+        message: 'দয়া করে প্রথমে Bot Token এবং Chat ID লিখুন।'
+      });
+      return;
+    }
+
+    setIsTestingTelegram(true);
+    setTelegramTestResult(null);
+
+    try {
+      let isSuccess = false;
+      let successMsg = '';
+
+      try {
+        const res = await fetch('/api/telegram/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            botToken: localSettings.telegramBotToken.trim(),
+            chatId: localSettings.telegramChatId.trim()
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            isSuccess = true;
+            successMsg = data.message || 'টেলিগ্রামে প্রোডাক্টের ছবিসহ টেস্ট নোটিফিকেশন সফলভাবে পৌঁছেছে! আপনার টেলিগ্রাম চেক করুন।';
+          }
+        }
+      } catch (srvErr) {
+        console.warn("Backend test route unavailable, trying direct client dispatch:", srvErr);
+      }
+
+      // If backend test wasn't successful (e.g. static hosting on Netlify), test directly via client Telegram API
+      if (!isSuccess) {
+        const sampleTestOrder: Order = {
+          id: "TEST-" + Math.floor(1000 + Math.random() * 9000),
+          customerName: "হিমায়া টেস্ট গ্রাহক (Test Customer)",
+          email: "test@himayafashion.com",
+          phone: "01832350726",
+          division: "ঢাকা (Dhaka)",
+          district: "ঢাকা (Dhaka)",
+          thana: "ধানমন্ডি (Dhanmondi)",
+          address: "বাড়ি #১২, রোড #৪, ধানমন্ডি, ঢাকা",
+          city: "ধানমন্ডি, ঢাকা",
+          deliveryArea: "Inside Dhaka",
+          deliveryCharge: 80,
+          items: [
+            {
+              id: "prod-sample-1",
+              title: "রয়েল ব্রাইডাল এমব্রয়ডারি ড্রেস (Royal Bridal Embroidery)",
+              price: 3150,
+              quantity: 1,
+              size: "XL",
+              color: "Deep Crimson",
+              image: "https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&q=80&w=800"
+            }
+          ],
+          totalAmount: 3230,
+          status: "Pending",
+          createdAt: new Date().toISOString(),
+          paymentMethod: "bkash",
+          paymentSenderPhone: "01832350726",
+          paymentTrxId: "TRX" + Math.floor(100000 + Math.random() * 900000),
+          isFirstOrder: true
+        };
+
+        const clientRes = await sendTelegramOrderNotificationClient(sampleTestOrder, localSettings);
+        if (clientRes.success) {
+          isSuccess = true;
+          successMsg = clientRes.withPhoto 
+            ? 'টেলিগ্রামে প্রোডাক্টের ছবিসহ টেস্ট নোটিফিকেশন সফলভাবে পৌঁছেছে! আপনার টেলিগ্রাম চেক করুন।' 
+            : 'টেলিগ্রামে টেস্ট নোটিফিকেশন সফলভাবে পৌঁছেছে! আপনার টেলিগ্রাম চেক করুন।';
+        } else {
+          throw new Error(clientRes.error || 'টেলিগ্রাম বার্তা পাঠানো ব্যর্থ হয়েছে। টোকেন বা চ্যাট আইডি যাচাই করুন।');
+        }
+      }
+
+      if (isSuccess) {
+        setTelegramTestResult({
+          success: true,
+          message: successMsg
+        });
+        setToastMessage('✅ টেলিগ্রামে ছবিসহ টেস্ট নোটিফিকেশন সফল হয়েছে!');
+      }
+    } catch (err: any) {
+      setTelegramTestResult({
+        success: false,
+        message: err.message || 'টেলিগ্রাম বার্তা পাঠানো ব্যর্থ হয়েছে। টোকেন বা চ্যাট আইডি যাচাই করুন।'
+      });
+    } finally {
+      setIsTestingTelegram(false);
     }
   };
 
@@ -2146,6 +2318,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     { id: 'coupons', label: 'Coupons', icon: Ticket, badge: coupons.length },
     { id: 'ads_promos', label: 'Ads & Links (বিজ্ঞাপন)', icon: Megaphone, badge: (localAdConfig.ads || []).filter(a => a.enabled).length },
     { id: 'reviews', label: 'Reviews', icon: MessageSquare, badge: reviews.length },
+    { id: 'telegram_bot', label: 'Telegram Bot (অর্ডার নোটিফিকেশন)', icon: Send, alert: !localSettings.telegramBotToken || !localSettings.telegramChatId },
     { id: 'settings', label: 'Website Settings', icon: Settings },
     { id: 'app_install', label: 'Download Apps (ফাইল কন্ট্রোল)', icon: Smartphone },
   ];
@@ -2622,7 +2795,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="space-y-6">
                     <div className="flex flex-wrap items-center justify-between gap-4">
                       <div>
-                        <h4 className="font-bold text-slate-900 text-lg">Product Inventory (প্রডাক্ট ইনভেন্টরি)</h4>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <h4 className="font-bold text-slate-900 text-lg">Product Inventory (প্রডাক্ট ইনভেন্টরি)</h4>
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border border-amber-400 text-amber-900 shadow-2xs">
+                            <Flame className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
+                            <span>টপ পপুলার: {localProducts.filter(p => p.isPopular || p.isPinned).length}/৫টি সক্রিয়</span>
+                          </span>
+                        </div>
                         <p className="text-xs text-slate-500">Add, edit, and delete products live on the website.</p>
                       </div>
                       <button
@@ -2642,7 +2821,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             colors: 'Maroon, Navy, Black',
                             stock: 15,
                             featured: true,
-                            isPinned: false
+                            isPinned: false,
+                            isPopular: false
                           });
                         }}
                         className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20 cursor-pointer"
@@ -3134,6 +3314,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             />
                           </div>
 
+                          {/* Popular Product Toggle Switch */}
+                          <div className="p-3.5 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-300 rounded-xl flex items-center justify-between gap-3 shadow-2xs">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-amber-500 text-white rounded-xl shadow-xs">
+                                <Flame className="w-4 h-4 fill-white" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                                  <span>পপুলার প্রোডাক্ট (Popular Product)</span>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-white shadow-2xs">
+                                    ওয়েবসাইটের শীর্ষে
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-600 mt-0.5">
+                                  অন থাকলে পণ্যটি ওয়েবসাইটের সর্বউপরে গোল্ডেন বর্ডারে হাইলাইট করা পপুলার কালেকশন সেকশনে সরাসরি প্রদর্শিত হবে।
+                                </p>
+                              </div>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(productForm.isPopular || productForm.isPinned)}
+                                onChange={e => setProductForm({ ...productForm, isPopular: e.target.checked, isPinned: e.target.checked })}
+                                className="sr-only peer"
+                              />
+                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                            </label>
+                          </div>
+
                           {/* Submit / Cancel Bar */}
                           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                             <button
@@ -3169,6 +3378,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <th className="p-3.5">Price & Discount</th>
                               <th className="p-3.5">Stock</th>
                               <th className="p-3.5">Badge</th>
+                              <th className="p-3.5 text-center">পপুলার কালেকশন</th>
                               <th className="p-3.5 text-right">Actions</th>
                             </tr>
                           </thead>
@@ -3201,6 +3411,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <div>
                                       <div className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                                         <span>{p.title}</span>
+                                        {(p.isPopular || p.isPinned) && (
+                                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-gradient-to-r from-amber-500 to-amber-600 text-white inline-flex items-center gap-0.5 shadow-2xs">
+                                            <Flame className="w-2.5 h-2.5 fill-current" /> পপুলার
+                                          </span>
+                                        )}
                                       </div>
                                       <div className="text-[10px] text-slate-500 mt-0.5">ID: {p.id}</div>
                                     </div>
@@ -3232,6 +3447,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                         </span>
                                       )}
                                     </div>
+                                  </td>
+                                  {/* Dedicated 1-Click Popular / Claim Toggle Button */}
+                                  <td className="p-3.5 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTogglePopular(p)}
+                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
+                                        p.isPopular || p.isPinned
+                                          ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white border-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-xs ring-2 ring-amber-400/40'
+                                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300'
+                                      }`}
+                                      title={p.isPopular || p.isPinned ? "পপুলার সেকশন থেকে সরান" : "পপুলার সেকশনে যুক্ত করুন"}
+                                    >
+                                      <Flame className={`w-3.5 h-3.5 shrink-0 ${p.isPopular || p.isPinned ? 'fill-white text-white' : 'text-amber-500'}`} />
+                                      <span>{p.isPopular || p.isPinned ? '🔥 পপুলার (Active)' : 'পপুলার করুন'}</span>
+                                    </button>
                                   </td>
                                   <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                                     <button
@@ -3266,7 +3497,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                           colors: p.colors.join(', '),
                                           stock: p.stock,
                                           featured: p.featured || false,
-                                          isPinned: p.isPinned || false
+                                          isPinned: Boolean(p.isPinned || p.isPopular),
+                                          isPopular: Boolean(p.isPopular || p.isPinned)
                                         });
                                       }}
                                       className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
@@ -5448,6 +5680,314 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </>
                         )}
                       </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 12. TELEGRAM BOT ORDER NOTIFICATION & MANAGEMENT TAB */}
+                {activeTab === 'telegram_bot' && (
+                  <div className="space-y-6 max-w-4xl">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-50 border border-sky-200 text-sky-800 text-[11px] font-bold uppercase tracking-wider mb-1.5">
+                          <Send className="w-3.5 h-3.5 text-sky-600" />
+                          <span>Telegram Bot Order Automation</span>
+                        </div>
+                        <h4 className="font-bold text-slate-900 text-xl flex items-center gap-2">
+                          <span>Telegram বটের মাধ্যমে অর্ডার নোটিফিকেশন ও ম্যানেজমেন্ট</span>
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          ওয়েবসাইটে যেকোনো কাস্টমার নতুন অর্ডার সাবমিট করলে সাথে সাথে স্বয়ংক্রিয়ভাবে আপনার টেলিগ্রামে পণ্যের ছবি, সাইজ, কাস্টমারের ঠিকানা ও পেমেন্ট তথ্যসহ মেসেজ চলে আসবে।
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={isSavingSettings}
+                        className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                      >
+                        {isSavingSettings ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                            <span>সেভ হচ্ছে...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4 text-white" />
+                            <span>টেলিগ্রাম সেটিংস সেভ করুন</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Live Status Card */}
+                    <div className={`p-5 rounded-2xl border transition-all ${
+                      localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim()
+                        ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
+                        : 'bg-amber-50/80 border-amber-300 text-amber-950'
+                    }`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
+                            localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim()
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-amber-500 text-white'
+                          }`}>
+                            <Bot className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm">
+                                {localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim()
+                                  ? 'টেলিগ্রাম বট সফলভাবে কনফিগার করা আছে (Connected)'
+                                  : 'টেলিগ্রাম বট এখনো কনফিগার করা হয়নি (Setup Required)'}
+                              </span>
+                              <span className={`w-2 h-2 rounded-full ${
+                                localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim()
+                                  ? 'bg-emerald-500 animate-pulse'
+                                  : 'bg-amber-500'
+                              }`} />
+                            </div>
+                            <p className="text-xs opacity-80 mt-0.5">
+                              {localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim()
+                                ? `চ্যাট আইডি: ${localSettings.telegramChatId} · প্রতিটি নতুন অর্ডারে স্বয়ংক্রিয় মেসেজ পাঠানো হচ্ছে।`
+                                : 'নিচের ৩টি সহজ ধাপ অনুসরণ করে আপনার বটের Token এবং Chat ID বসিয়ে দিন।'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {localSettings.telegramBotToken?.trim() && localSettings.telegramChatId?.trim() && (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-full self-start sm:self-auto border border-emerald-300">
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Active & Ready</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Telegram Config Form */}
+                    <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-5">
+                      <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                        <div>
+                          <h5 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                            <Send className="w-4 h-4 text-sky-600" />
+                            <span>Telegram Bot API ক্রেডেনশিয়াল (Credentials)</span>
+                          </h5>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            আপনার টেলিগ্রাম বটের সিক্রেট টোকেন ও টার্গেট চ্যাট আইডি লিখুন
+                          </p>
+                        </div>
+
+                        {/* Enable/Disable Toggle */}
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={localSettings.isTelegramNotificationsEnabled !== false}
+                            onChange={(e) => setLocalSettings({ ...localSettings, isTelegramNotificationsEnabled: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-12 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+                        </label>
+                      </div>
+
+                      {/* Bot Token Input */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                            Telegram Bot Token <span className="text-rose-500">*</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowTelegramToken(!showTelegramToken)}
+                            className="text-[11px] text-sky-600 hover:text-sky-700 font-medium flex items-center gap-1 cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{showTelegramToken ? 'টোকেন লুকান (Hide)' : 'টোকেন দেখুন (Show)'}</span>
+                          </button>
+                        </div>
+                        <input
+                          type={showTelegramToken ? 'text' : 'password'}
+                          value={localSettings.telegramBotToken || ''}
+                          onChange={(e) => setLocalSettings({ ...localSettings, telegramBotToken: e.target.value })}
+                          placeholder="e.g. 7123456789:AAHk2Vn_exampleTokenSecret"
+                          className="w-full px-4 py-2.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-slate-900"
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          টেলিগ্রামের অফিসিয়াল <strong>@BotFather</strong> থেকে <code>/newbot</code> দিয়ে বট বানালে যে HTTP API Token পাবেন তা এখানে দিন।
+                        </p>
+                      </div>
+
+                      {/* Chat ID Input */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                          Telegram Chat ID / Group ID <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={localSettings.telegramChatId || ''}
+                          onChange={(e) => setLocalSettings({ ...localSettings, telegramChatId: e.target.value })}
+                          placeholder="e.g. 123456789 (ব্যক্তিগত চ্যাট) অথবা -100xxxxxxxxxx (গ্রুপ/চ্যানেল)"
+                          className="w-full px-4 py-2.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-slate-900 font-bold"
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          টেলিগ্রামের <strong>@userinfobot</strong> বা <strong>@getmyid_bot</strong>-এ <code>/start</code> দিলে আপনার সংখ্যাবাচক Chat ID পেয়ে যাবেন।
+                        </p>
+                      </div>
+
+                      {/* Test Alert Button and Result */}
+                      <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleTestTelegramAlert}
+                          disabled={isTestingTelegram}
+                          className="px-5 py-2.5 bg-sky-600 hover:bg-sky-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          {isTestingTelegram ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>টেস্ট পাঠানো হচ্ছে...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-3.5 h-3.5" />
+                              <span>ছবিসহ টেস্ট নোটিফিকেশন পাঠান (Send Test Photo Alert)</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleSaveSettings}
+                          disabled={isSavingSettings}
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          {isSavingSettings ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>সেভ হচ্ছে...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="w-3.5 h-3.5" />
+                              <span>সেটিংস সেভ করুন (Save)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Test Result Message Box */}
+                      {telegramTestResult && (
+                        <div className={`p-4 rounded-xl text-xs flex items-start gap-2.5 ${
+                          telegramTestResult.success
+                            ? 'bg-emerald-50 border border-emerald-300 text-emerald-900'
+                            : 'bg-rose-50 border border-rose-300 text-rose-900'
+                        }`}>
+                          {telegramTestResult.success ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          )}
+                          <div className="space-y-1">
+                            <div className="font-bold">
+                              {telegramTestResult.success ? 'নোটিফিকেশন সফল!' : 'মেসেজ পাঠানো ব্যর্থ হয়েছে:'}
+                            </div>
+                            <p>{telegramTestResult.message}</p>
+                            {telegramTestResult.success && (
+                              <p className="text-[11px] text-emerald-700 font-medium">
+                                💡 আপনি আপনার টেলিগ্রাম অ্যাপে একটি কাল্পনিক টেস্ট অর্ডার নোটিফিকেশন দেখতে পাবেন। এখন থেকে ওয়েবসাইটে কোনো কাস্টমার অর্ডার দিলেই সরাসরি সেখানে মেসেজ আসবে!
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Step-by-Step Instructions Card */}
+                    <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-sm">
+                          ?
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-slate-900 text-base">
+                            টেলিগ্রাম থেকে কী কী নিতে হবে এবং কীভাবে পাবেন? (সহজ নির্দেশিকা)
+                          </h5>
+                          <p className="text-xs text-slate-500">
+                            টেলিগ্রাম বট সেটআপ করতে মাত্র ২-৩ মিনিট সময় লাগবে। নিচের ধাপগুলো অনুসরণ করুন:
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        {/* Step 1 */}
+                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-sky-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                              ১
+                            </span>
+                            <span className="font-bold text-slate-900 text-xs">
+                              টেলিগ্রাম বট তৈরি করুন (Bot Token)
+                            </span>
+                          </div>
+                          <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside pl-1 leading-relaxed">
+                            <li>আপনার Telegram অ্যাপে সার্চ করুন: <strong className="text-sky-700">@BotFather</strong></li>
+                            <li>চ্যাটে লিখুন: <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-sky-800">/newbot</code></li>
+                            <li>বটের নাম দিন, যেমন: <strong className="text-slate-800">Himaya Fashion Orders</strong></li>
+                            <li>বটের একটি ইউজারনেম দিন (শেষে <code>bot</code> থাকতে হবে), যেমন: <strong className="text-slate-800">himayafashion_order_bot</strong></li>
+                            <li>BotFather আপনাকে একটি <strong>HTTP API Token</strong> দেবে (যেমন: <code>7123456789:AAH...</code>)। সেটি কপি করে উপরের <strong>Telegram Bot Token</strong> ফিল্ডে বসান।</li>
+                          </ol>
+                        </div>
+
+                        {/* Step 2 */}
+                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-sky-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                              ২
+                            </span>
+                            <span className="font-bold text-slate-900 text-xs">
+                              আপনার Chat ID বের করুন
+                            </span>
+                          </div>
+                          <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside pl-1 leading-relaxed">
+                            <li>Telegram-এ সার্চ করুন: <strong className="text-sky-700">@userinfobot</strong> অথবা <strong className="text-sky-700">@getmyid_bot</strong></li>
+                            <li>চ্যাটে <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-sky-800">/start</code> চাপুন।</li>
+                            <li>বট আপনাকে আপনার সংখ্যাবাচক <strong>Id</strong> দেখিয়ে দেবে (যেমন: <code>684729182</code>)।</li>
+                            <li>সেটি কপি করে উপরের <strong>Telegram Chat ID</strong> ফিল্ডে বসান।</li>
+                            <li>(আপনি চাইলে কোনো টেলিগ্রাম গ্রুপ খুলে সেখানে আপনার বট যুক্ত করে পুরো টিমের কাছেও অর্ডার পাঠাতে পারেন)।</li>
+                          </ol>
+                        </div>
+
+                        {/* Step 3 */}
+                        <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                              ৩
+                            </span>
+                            <span className="font-bold text-amber-950 text-xs">
+                              বটকে মেসেজ পাঠানোর অনুমতি দিন (Important)
+                            </span>
+                          </div>
+                          <p className="text-xs text-amber-900 leading-relaxed">
+                            আপনি যে বটটি তৈরি করলেন, টেলিগ্রামে গিয়ে সেই বটের চ্যাটে ঢুকে অবশ্যই একবার <strong>START</strong> বাটনে ক্লিক করুন। টেলিগ্রামের নিয়মানুযায়ী ব্যবহারকারী স্টার্ট না করলে বট কোনো মেসেজ পাঠাতে পারে না।
+                          </p>
+                        </div>
+
+                        {/* Step 4 */}
+                        <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                              ৪
+                            </span>
+                            <span className="font-bold text-emerald-950 text-xs">
+                              টেস্ট করুন এবং সেভ করুন
+                            </span>
+                          </div>
+                          <p className="text-xs text-emerald-900 leading-relaxed">
+                            Token ও Chat ID বসিয়ে <strong>"টেস্ট নোটিফিকেশন পাঠান"</strong> বাটনে ক্লিক করুন। সাথে সাথে আপনার টেলিগ্রামে টেস্ট অর্ডার মেসেজ চলে যাবে। এরপর <strong>"টেলিগ্রাম সেটিংস সেভ করুন"</strong> বাটনে ক্লিক করলেই কাজ শেষ!
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

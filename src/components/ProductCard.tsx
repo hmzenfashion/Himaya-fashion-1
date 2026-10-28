@@ -20,6 +20,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [altImageError, setAltImageError] = useState(false);
   const [primaryImageError, setPrimaryImageError] = useState(false);
+  const [isHeartAnimating, setIsHeartAnimating] = useState(false);
+
+  const handleToggleWishlist = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isWishlisted) {
+      setIsHeartAnimating(true);
+      setTimeout(() => setIsHeartAnimating(false), 700);
+    }
+    onToggleWishlist(product);
+  };
 
   // Compute all available images for alternative hover preview
   const allImages = Array.from(
@@ -110,17 +120,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         {/* Action Buttons Top Right: Wishlist & Share */}
         <div className="absolute top-1 right-1 sm:top-2.5 sm:right-2.5 flex flex-col gap-1 z-10">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleWishlist(product);
-            }}
-            className={`p-1 sm:p-2 rounded-full backdrop-blur-md transition-all shadow-xs ${
+            onClick={handleToggleWishlist}
+            className={`p-1 sm:p-2 rounded-full backdrop-blur-md transition-all shadow-xs cursor-pointer ${
               isWishlisted ? 'bg-[#C5A059] text-white' : 'bg-white/85 text-[#1A1A1A] hover:bg-white'
-            }`}
+            } ${isHeartAnimating ? 'animate-heartbeat ring-2 ring-[#C5A059]/50 shadow-md' : 'active:scale-90'}`}
             aria-label="Wishlist"
-            title="Add to Wishlist"
+            title={isWishlisted ? "Wishlist থেকে সরান" : "Add to Wishlist"}
           >
-            <Heart className={`w-3 h-3 sm:w-4 sm:h-4 ${isWishlisted ? 'fill-current' : ''}`} />
+            <Heart className={`w-3 h-3 sm:w-4 sm:h-4 transition-transform ${isWishlisted ? 'fill-current' : ''} ${isHeartAnimating ? 'animate-heartbeat' : ''}`} />
           </button>
 
           <button
