@@ -18,6 +18,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onToggleWishlist,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
+  const [altImageError, setAltImageError] = useState(false);
+  const [primaryImageError, setPrimaryImageError] = useState(false);
+
+  // Compute all available images for alternative hover preview
+  const allImages = Array.from(
+    new Set([product.image, ...(product.images || [])])
+  ).filter(Boolean);
+
+  const primaryImage = product.image || allImages[0] || '';
+  const altImage = allImages.length > 1 ? allImages[1] : null;
   const hasDiscount = Boolean(product.originalPrice && product.originalPrice > product.price);
   const discountPercent = hasDiscount && product.originalPrice
     ? Math.round(((product.originalPrice - product.price) / product.originalPrice) * 100)
@@ -55,11 +65,33 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         className="relative aspect-[3/4] bg-[#F4F4F0] overflow-hidden cursor-pointer"
         onClick={() => onSelect(product)}
       >
+        {/* Primary Image */}
         <img
-          src={product.image}
+          src={primaryImageError ? 'https://images.unsplash.com/photo-1515372039744-b8f02a3ae446?auto=format&fit=crop&q=80&w=800' : primaryImage}
           alt={product.title}
+          onError={() => setPrimaryImageError(true)}
           className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500 ease-out"
+          loading="lazy"
         />
+
+        {/* Alternative Image Hover Preview */}
+        {altImage && !altImageError && (
+          <img
+            src={altImage}
+            alt={`${product.title} - Alternative Preview`}
+            onError={() => setAltImageError(true)}
+            className="absolute inset-0 w-full h-full object-cover object-center opacity-0 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500 ease-out pointer-events-none"
+            loading="lazy"
+          />
+        )}
+
+        {/* Subtle Multi-view Indicator Badge */}
+        {allImages.length > 1 && (
+          <div className="absolute bottom-2 left-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none flex items-center gap-1 bg-black/60 backdrop-blur-xs px-2 py-0.5 rounded-full text-[9px] text-white font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#C5A059] animate-pulse" />
+            <span>+{allImages.length - 1} view</span>
+          </div>
+        )}
 
         {/* Badges Container */}
         <div className="absolute top-1 left-1 sm:top-2.5 sm:left-2.5 flex flex-col gap-1 z-10">
