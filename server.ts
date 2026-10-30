@@ -121,6 +121,9 @@ export interface CouponItem {
   offerTitle?: string;
   minSpend: number;
   status: 'Active' | 'Expired';
+  isHidden?: boolean;
+  singleUse?: boolean;
+  deleteOnUse?: boolean;
   createdAt?: string;
 }
 
@@ -485,7 +488,7 @@ const defaultCouponsList: CouponItem[] = [
 
 app.get("/api/coupons", (req, res) => {
   const data = getStoreData();
-  if (!data.coupons || !Array.isArray(data.coupons) || data.coupons.length === 0) {
+  if (data.coupons === undefined || data.coupons === null) {
     data.coupons = defaultCouponsList;
     saveStoreData(data);
   }
@@ -511,9 +514,12 @@ app.post("/api/coupons", (req, res) => {
       offerTitle: req.body.offerTitle || displayDiscount,
       minSpend: Number(req.body.minSpend) || 0,
       status: req.body.status || 'Active',
+      isHidden: Boolean(req.body.isHidden),
+      singleUse: req.body.singleUse !== undefined ? Boolean(req.body.singleUse) : true,
+      deleteOnUse: req.body.deleteOnUse !== undefined ? Boolean(req.body.deleteOnUse) : true,
       createdAt: req.body.createdAt || new Date().toISOString()
     };
-    data.coupons = [newCoupon, ...data.coupons.filter(c => c.id !== newCoupon.id && c.code !== newCoupon.code)];
+    data.coupons = [newCoupon, ...data.coupons.filter(c => c.id !== newCoupon.id && c.code.toLowerCase() !== newCoupon.code.toLowerCase())];
   }
   saveStoreData(data);
   res.json({ success: true, coupons: data.coupons });
@@ -523,7 +529,7 @@ app.put("/api/coupons/:id", (req, res) => {
   const { id } = req.params;
   const data = getStoreData();
   if (!Array.isArray(data.coupons)) data.coupons = [];
-  const idx = data.coupons.findIndex(c => c.id === id);
+  const idx = data.coupons.findIndex(c => c.id === id || c.code.toLowerCase() === id.toLowerCase());
   if (idx === -1) {
     return res.status(404).json({ error: "Coupon not found" });
   }
@@ -532,7 +538,8 @@ app.put("/api/coupons/:id", (req, res) => {
     ...req.body,
     code: req.body.code ? String(req.body.code).trim().toUpperCase() : data.coupons[idx].code,
     displayDiscount: req.body.displayDiscount || data.coupons[idx].displayDiscount,
-    discount: req.body.displayDiscount || data.coupons[idx].displayDiscount
+    discount: req.body.displayDiscount || data.coupons[idx].displayDiscount,
+    isHidden: req.body.isHidden !== undefined ? Boolean(req.body.isHidden) : data.coupons[idx].isHidden
   };
   saveStoreData(data);
   res.json({ success: true, coupon: data.coupons[idx], coupons: data.coupons });
@@ -542,7 +549,8 @@ app.delete("/api/coupons/:id", (req, res) => {
   const { id } = req.params;
   const data = getStoreData();
   if (!Array.isArray(data.coupons)) data.coupons = [];
-  data.coupons = data.coupons.filter(c => c.id !== id);
+  const targetId = String(id).toLowerCase();
+  data.coupons = data.coupons.filter(c => String(c.id).toLowerCase() !== targetId && String(c.code).toLowerCase() !== targetId);
   saveStoreData(data);
   res.json({ success: true, coupons: data.coupons });
 });
@@ -758,11 +766,218 @@ async function sendTelegramOrderNotification(order: Order, customSettings?: Stor
       }
     }
 
-    // Try to send with photo if available
+    // Resolve all ordered items with photos (base64 buffers, local files, or remote URLs)
+    const items = order.items || [];
+    const resolvedItems: Array<{
+      title: string;
+      size: string;
+      color: string;
+      quantity: number;
+      price: number;
+      image: string;
+      blob: Blob | null;
+      filename: string;
+    }> = [];
+
+    for (const it of items) {
+      const rawImg = (it.image || '').trim();
+      let blob: Blob | null = null;
+      let filename = 'product.jpg';
+
+      if (rawImg.startsWith('data:image/')) {
+        try {
+          const base64Data = rawImg.replace(/^data:image\/\w+;base64,/, '');
+          const buffer = Buffer.from(base64Data, 'base64');
+          blob = new Blob([buffer], { type: 'image/jpeg' });
+          filename = 'product_image.jpg';
+        } catch {}
+      } else if (!rawImg.startsWith('http://') && !rawImg.startsWith('https://')) {
+        const candidatePaths = [
+          path.join(process.cwd(), rawImg),
+          path.join(process.cwd(), 'public', rawImg),
+          path.join(UPLOADS_DIR, path.basename(rawImg)),
+          path.join(DATA_DIR, rawImg)
+        ];
+        for (const p of candidatePaths) {
+          if (fs.existsSync(p)) {
+            try {
+              const buffer = fs.readFileSync(p);
+              blob = new Blob([buffer], { type: 'image/jpeg' });
+              filename = path.basename(p);
+              break;
+            } catch {}
+          }
+        }
+      }
+
+      resolvedItems.push({
+        title: it.title || 'Product',
+        size: it.size || 'Free Size',
+        color: it.color || 'Standard',
+        quantity: it.quantity || 1,
+        price: it.price || 0,
+        image: rawImg,
+        blob,
+        filename
+      });
+    }
+
+    const itemsWithPhotos = resolvedItems.filter(i => i.blob !== null || i.image.startsWith('http://') || i.image.startsWith('https://'));
+
+    // ==========================================
+    // CASE A: Customer ordered MULTIPLE items in bag (>1 item with photos)
+    // ==========================================
+    if (itemsWithPhotos.length > 1) {
+      let albumSent = false;
+
+      // Attempt 1: Grouped photo album (sendMediaGroup)
+      try {
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+
+        const mediaGroupPayload: any[] = [];
+        const albumBatch = itemsWithPhotos.slice(0, 10);
+
+        for (let idx = 0; idx < albumBatch.length; idx++) {
+          const item = albumBatch[idx];
+          const itemTotal = (item.price * item.quantity).toFixed(2);
+          const caption = idx === 0
+            ? `🛍️ <b>অর্ডার #${escapeTelegramHtml(order.id)} [পণ্য ১/${items.length}]</b>\n<b>${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`
+            : `👗 <b>[পণ্য ${idx + 1}/${items.length}] ${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`;
+
+          if (item.blob) {
+            const attachName = `photo_${idx}`;
+            formData.append(attachName, item.blob, item.filename || `product_${idx + 1}.jpg`);
+            mediaGroupPayload.push({
+              type: 'photo',
+              media: `attach://${attachName}`,
+              caption,
+              parse_mode: 'HTML'
+            });
+          } else {
+            mediaGroupPayload.push({
+              type: 'photo',
+              media: item.image,
+              caption,
+              parse_mode: 'HTML'
+            });
+          }
+        }
+
+        formData.append('media', JSON.stringify(mediaGroupPayload));
+
+        const mediaRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMediaGroup`, {
+          method: 'POST',
+          body: formData
+        });
+        const mediaData = await mediaRes.json().catch(() => null);
+
+        if (mediaRes.ok && mediaData?.ok) {
+          albumSent = true;
+          console.log(`✅ [Backend] Telegram sendMediaGroup succeeded with ${albumBatch.length} item photos for order:`, order.id);
+        } else if (mediaRes.status === 401 || mediaData?.error_code === 401) {
+          console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Please update the Bot Token in Admin Dashboard > Telegram Bot from @BotFather.");
+          return { success: false, error: "Telegram Bot Token is unauthorized (401). Please update in Admin Settings." };
+        } else {
+          console.warn("[Backend] Telegram sendMediaGroup note:", mediaData?.description || 'album not sent');
+        }
+      } catch (albumErr) {
+        console.warn("[Backend] Telegram sendMediaGroup exception:", albumErr);
+      }
+
+      // Attempt 2: Sequential sendPhoto for each item if mediaGroup failed (only if not unauthorized)
+      if (!albumSent) {
+        for (let idx = 0; idx < itemsWithPhotos.length; idx++) {
+          const item = itemsWithPhotos[idx];
+          const itemTotal = (item.price * item.quantity).toFixed(2);
+          const caption = `📦 <b>[পণ্য ${idx + 1}/${items.length}] ${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`;
+
+          try {
+            if (item.blob) {
+              const itemForm = new FormData();
+              itemForm.append('chat_id', chatId);
+              itemForm.append('caption', caption);
+              itemForm.append('parse_mode', 'HTML');
+              itemForm.append('photo', item.blob, item.filename || `product_${idx + 1}.jpg`);
+              const pRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                method: 'POST',
+                body: itemForm
+              });
+              if (pRes.status === 401) {
+                console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Stopping photo dispatch.");
+                return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+              }
+            } else if (item.image) {
+              const pRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  photo: item.image,
+                  caption,
+                  parse_mode: 'HTML'
+                })
+              });
+              if (pRes.status === 401) {
+                console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Stopping photo dispatch.");
+                return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+              }
+            }
+          } catch (singleErr) {
+            console.warn(`[Backend] Telegram sendPhoto for item ${idx + 1} note:`, singleErr);
+          }
+        }
+      }
+
+      // Now send the complete invoice message with WhatsApp button
+      const invoiceRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: fullMessageHtml,
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup
+        })
+      });
+      const invoiceData = await invoiceRes.json().catch(() => null);
+      if (invoiceRes.ok && invoiceData?.ok) {
+        return { success: true, withPhoto: true, result: invoiceData };
+      }
+      if (invoiceRes.status === 401 || invoiceData?.error_code === 401) {
+        console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Please update in Admin Settings.");
+        return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+      }
+    }
+
+    // ==========================================
+    // CASE B: Single item with photo
+    // ==========================================
     if (primaryImage) {
       try {
-        // Option 1: Remote HTTP/HTTPS URL
-        if (primaryImage.startsWith('http://') || primaryImage.startsWith('https://')) {
+        const singleResolved = resolvedItems.find(i => i.blob !== null || i.image);
+        if (singleResolved?.blob) {
+          const formData = new FormData();
+          formData.append('chat_id', chatId);
+          formData.append('caption', captionHtml);
+          formData.append('parse_mode', 'HTML');
+          formData.append('reply_markup', JSON.stringify(replyMarkup));
+          formData.append('photo', singleResolved.blob, singleResolved.filename || 'product_image.jpg');
+
+          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            body: formData
+          });
+          const photoData = await photoRes.json().catch(() => null);
+          if (photoRes.ok && photoData?.ok) {
+            console.log("✅ [Backend] Telegram order alert sent with image blob for order:", order.id);
+            return { success: true, withPhoto: true, result: photoData };
+          }
+          if (photoRes.status === 401 || photoData?.error_code === 401) {
+            console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Please update in Admin Settings.");
+            return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+          }
+        } else if (primaryImage.startsWith('http://') || primaryImage.startsWith('https://')) {
           const photoUrl = `https://api.telegram.org/bot${botToken}/sendPhoto`;
           const photoRes = await fetch(photoUrl, {
             method: 'POST',
@@ -777,76 +992,19 @@ async function sendTelegramOrderNotification(order: Order, customSettings?: Stor
           });
           const photoData = await photoRes.json().catch(() => null);
           if (photoRes.ok && photoData?.ok) {
-            console.log("✅ Telegram order alert sent with remote image URL for order:", order.id);
+            console.log("✅ [Backend] Telegram order alert sent with remote image URL for order:", order.id);
             return { success: true, withPhoto: true, result: photoData };
-          } else {
-            console.warn("⚠️ Telegram sendPhoto via remote URL failed:", photoData?.description);
+          }
+          if (photoRes.status === 401 || photoData?.error_code === 401) {
+            console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Please update in Admin Settings.");
+            return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
           }
         }
-        // Option 2: Base64 Data URL (data:image/...)
-        else if (primaryImage.startsWith('data:image/')) {
-          const base64Data = primaryImage.replace(/^data:image\/\w+;base64,/, '');
-          const buffer = Buffer.from(base64Data, 'base64');
-          const formData = new FormData();
-          formData.append('chat_id', chatId);
-          formData.append('caption', captionHtml);
-          formData.append('parse_mode', 'HTML');
-          formData.append('reply_markup', JSON.stringify(replyMarkup));
-          const blob = new Blob([buffer], { type: 'image/jpeg' });
-          formData.append('photo', blob, 'product_image.jpg');
-
-          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-            method: 'POST',
-            body: formData
-          });
-          const photoData = await photoRes.json().catch(() => null);
-          if (photoRes.ok && photoData?.ok) {
-            console.log("✅ Telegram order alert sent with base64 image for order:", order.id);
-            return { success: true, withPhoto: true, result: photoData };
-          } else {
-            console.warn("⚠️ Telegram sendPhoto with base64 failed:", photoData?.description);
-          }
-        }
-        // Option 3: Local file on disk
-        else {
-          const candidatePaths = [
-            path.join(process.cwd(), primaryImage),
-            path.join(process.cwd(), 'public', primaryImage),
-            path.join(UPLOADS_DIR, path.basename(primaryImage)),
-            path.join(DATA_DIR, primaryImage)
-          ];
-          let resolvedFilePath = '';
-          for (const p of candidatePaths) {
-            if (fs.existsSync(p)) {
-              resolvedFilePath = p;
-              break;
-            }
-          }
-          if (resolvedFilePath) {
-            const buffer = fs.readFileSync(resolvedFilePath);
-            const formData = new FormData();
-            formData.append('chat_id', chatId);
-            formData.append('caption', captionHtml);
-            formData.append('parse_mode', 'HTML');
-            formData.append('reply_markup', JSON.stringify(replyMarkup));
-            const blob = new Blob([buffer], { type: 'image/jpeg' });
-            formData.append('photo', blob, path.basename(resolvedFilePath));
-
-            const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-              method: 'POST',
-              body: formData
-            });
-            const photoData = await photoRes.json().catch(() => null);
-            if (photoRes.ok && photoData?.ok) {
-              console.log("✅ Telegram order alert sent with local file image for order:", order.id);
-              return { success: true, withPhoto: true, result: photoData };
-            }
-          }
-        }
-      } catch (photoErr) {
-        console.warn("⚠️ sendPhoto exception, falling back to sendMessage:", photoErr);
+      } catch (singlePhotoErr) {
+        console.warn("⚠️ [Backend] sendPhoto note:", singlePhotoErr);
       }
     }
+
 
     // Fallback: Send message as text
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -861,15 +1019,19 @@ async function sendTelegramOrderNotification(order: Order, customSettings?: Stor
     });
 
     const responseData = await response.json().catch(() => null);
+    if (response.status === 401 || responseData?.error_code === 401) {
+      console.warn("⚠️ [Backend Telegram] Token is unauthorized (401). Please update the Bot Token in Admin Settings.");
+      return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+    }
     if (!response.ok || !responseData?.ok) {
-      console.error("Telegram API Error:", responseData);
+      console.warn("⚠️ Telegram API note:", responseData?.description);
       return { success: false, error: responseData?.description || 'Failed to send Telegram message' };
     }
 
     console.log("✅ Telegram order alert sent successfully for order:", order.id);
     return { success: true, withPhoto: false, result: responseData };
   } catch (err: any) {
-    console.error("Exception in sendTelegramOrderNotification:", err);
+    console.warn("Telegram notification note:", err?.message || err);
     return { success: false, error: err.message || 'Telegram notification failed' };
   }
 }

@@ -32,7 +32,8 @@ import {
   registerCustomerWithEmail,
   signOutUser,
   clearStoredCustomer,
-  fetchCouponsFromFirestore
+  fetchCouponsFromFirestore,
+  deleteCouponFromFirestore
 } from '../firebase';
 import { sendTelegramOrderNotificationClient } from '../utils/telegramNotify';
 import {
@@ -52,6 +53,7 @@ interface CheckoutModalProps {
   onCustomerAuthSuccess?: (customer: CustomerUser) => void;
   onSignOutCustomer?: () => void;
   coupons?: CouponItem[];
+  onConsumeCoupon?: (couponId: string) => void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -64,6 +66,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onCustomerAuthSuccess,
   onSignOutCustomer,
   coupons = [],
+  onConsumeCoupon,
 }) => {
   // REQUIREMENT: Form fields must start EMPTY for every new order
   const [formData, setFormData] = useState({
@@ -128,33 +131,44 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   }, [isOpen, currentUser]);
 
-  // Available coupons pool (from props, localStorage, and defaults)
+  // Available coupons pool (from props, localStorage, and defaults filtered against deletion blacklist)
   const availableCoupons: CouponItem[] = useMemo(() => {
-    const list: CouponItem[] = [...coupons];
+    let deletedCodes = new Set<string>();
     try {
-      const saved = localStorage.getItem('himaya_coupons');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const existingCodes = new Set(list.map(c => c.code.toUpperCase()));
-          parsed.forEach((c: any) => {
-            if (c?.code && !existingCodes.has(c.code.toUpperCase())) {
-              list.push(c);
-            }
-          });
+      const delSaved = localStorage.getItem('himaya_deleted_coupons');
+      if (delSaved) {
+        const parsedDel = JSON.parse(delSaved);
+        if (Array.isArray(parsedDel)) {
+          deletedCodes = new Set(parsedDel.map(s => String(s).toUpperCase()));
         }
       }
     } catch {}
 
-    if (list.length === 0) {
-      return [
-        { id: 'c1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', minSpend: 1000, status: 'Active' },
-        { id: 'c2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', minSpend: 500, status: 'Active' },
-        { id: 'c3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 150, displayDiscount: 'Free Shipping', minSpend: 1500, status: 'Active' },
-        { id: 'c4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', minSpend: 800, status: 'Active' },
-        { id: 'c5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', minSpend: 2000, status: 'Active' },
-      ];
-    }
+    const list: CouponItem[] = [...coupons].filter(
+      c => !deletedCodes.has(String(c.code).toUpperCase()) && !deletedCodes.has(String(c.id).toUpperCase())
+    );
+
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const existingCodes = new Set(list.map(c => c.code.toUpperCase()));
+          parsed.forEach((c: any) => {
+            if (
+              c?.code &&
+              !existingCodes.has(c.code.toUpperCase()) &&
+              !deletedCodes.has(c.code.toUpperCase()) &&
+              !deletedCodes.has(String(c.id).toUpperCase())
+            ) {
+              list.push(c);
+            }
+          });
+          return list; // Respect stored list even if empty
+        }
+      }
+    } catch {}
+
     return list;
   }, [coupons]);
 
@@ -201,12 +215,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
     const found = availableCoupons.find(c => c.code.toUpperCase() === code);
     if (!found) {
-      setCouponError(`"${code}" কুপনটি পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।`);
+      setCouponError(`ভুল কুপন কোড! "${code}" কুপনটি সঠিক নয় বা মেয়াদোত্তীর্ণ।`);
       return;
     }
 
     if (found.status === 'Expired') {
-      setCouponError(`"${code}" কুপনটির মেয়াদ শেষ হয়ে গেছে।`);
+      setCouponError(`"${code}" কুপনটির মেয়াদ শেষ হয়ে গেছে বা নিষ্ক্রিয়।`);
       return;
     }
 
@@ -482,7 +496,27 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
         console.warn("Client Telegram dispatch notice:", tErr);
       });
 
-      // 3. Also register in local server
+      // 3. Auto-delete coupon on sale ("jeita sell dibe oita jeno dlete hoye jai")
+      if (appliedCoupon) {
+        try {
+          deleteCouponFromFirestore(appliedCoupon.id, appliedCoupon.code).catch(() => {});
+          if (onConsumeCoupon) {
+            onConsumeCoupon(appliedCoupon.id);
+          }
+          const saved = localStorage.getItem('himaya_coupons');
+          if (saved) {
+            let list = JSON.parse(saved);
+            if (Array.isArray(list)) {
+              list = list.filter((c: any) => c.id !== appliedCoupon.id && c.code.toUpperCase() !== appliedCoupon.code.toUpperCase());
+              localStorage.setItem('himaya_coupons', JSON.stringify(list));
+            }
+          }
+        } catch (couponDelErr) {
+          console.warn("Coupon auto-delete notice:", couponDelErr);
+        }
+      }
+
+      // 4. Also register in local server
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -989,7 +1023,7 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
                               handleApplyCoupon();
                             }
                           }}
-                          placeholder="e.g. EID2026, WELCOME10, FREESHIP"
+                          placeholder="কুপন বা প্রোমো কোড লিখুন..."
                           className="w-full px-3 py-2 text-xs font-mono uppercase bg-white border border-[#E6E2DD] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#C5A059] focus:border-[#C5A059]"
                         />
                       </div>
@@ -1045,23 +1079,6 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
                     </p>
                   )}
 
-                  {/* Suggestion tags if not applied */}
-                  {!appliedCoupon && availableCoupons.length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                      <span className="text-[10px] text-slate-500 font-medium">অফারসমূহ:</span>
-                      {availableCoupons.slice(0, 4).map(c => (
-                        <button
-                          key={c.id || c.code}
-                          type="button"
-                          onClick={() => handleApplyCoupon(c.code)}
-                          className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-all cursor-pointer"
-                        >
-                          <Ticket className="w-2.5 h-2.5 text-amber-600" />
-                          <span>{c.code} ({c.discount || c.displayDiscount})</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 <div className="space-y-1.5 text-xs">

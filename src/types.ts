@@ -89,6 +89,9 @@ export interface CouponItem {
   offerTitle?: string;
   minSpend: number;
   status: 'Active' | 'Expired';
+  isHidden?: boolean;
+  singleUse?: boolean;
+  deleteOnUse?: boolean;
   createdAt?: string;
 }
 

@@ -137,20 +137,34 @@ export default function App() {
 
   // Coupons state
   const [coupons, setCoupons] = useState<CouponItem[]>(() => {
+    let deletedCodes = new Set<string>();
     try {
-      const saved = localStorage.getItem('himaya_coupons');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const delSaved = localStorage.getItem('himaya_deleted_coupons');
+      if (delSaved) {
+        const parsedDel = JSON.parse(delSaved);
+        if (Array.isArray(parsedDel)) {
+          deletedCodes = new Set(parsedDel.map(s => String(s).toUpperCase()));
+        }
       }
     } catch {}
-    return [
-      { id: 'c1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', minSpend: 1000, status: 'Active' },
-      { id: 'c2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', minSpend: 500, status: 'Active' },
-      { id: 'c3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 150, displayDiscount: 'Free Shipping', minSpend: 1500, status: 'Active' },
-      { id: 'c4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', minSpend: 800, status: 'Active' },
-      { id: 'c5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', minSpend: 2000, status: 'Active' },
+
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(c => !deletedCodes.has(String(c.code).toUpperCase()) && !deletedCodes.has(String(c.id).toUpperCase()));
+        }
+      }
+    } catch {}
+    const baseDefaults: CouponItem[] = [
+      { id: 'c1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', offerTitle: 'ঈদ স্পেশাল ২০% ছাড় অফার', minSpend: 1000, status: 'Active' },
+      { id: 'c2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', offerTitle: 'নতুন গ্রাহকদের জন্য ১০% ছাড়', minSpend: 500, status: 'Active' },
+      { id: 'c3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 150, displayDiscount: 'Free Shipping', offerTitle: 'ফ্রি ডেলিভারি অফার (Free Shipping)', minSpend: 1500, status: 'Active' },
+      { id: 'c4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', offerTitle: 'ফ্ল্যাট ৳১০০ ছাড়', minSpend: 800, status: 'Active' },
+      { id: 'c5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', offerTitle: 'ফ্ল্যাট ৳২৫০ ছাড়', minSpend: 2000, status: 'Active' },
     ];
+    return baseDefaults.filter(c => !deletedCodes.has(c.code.toUpperCase()) && !deletedCodes.has(c.id.toUpperCase()));
   });
 
   // Cart & Wishlist state
@@ -896,6 +910,7 @@ export default function App() {
           storeSettings={storeSettings}
           currentUser={activeCustomer}
           coupons={coupons}
+          onConsumeCoupon={(consumedId) => setCoupons(prev => prev.filter(c => c.id !== consumedId))}
           onCustomerAuthSuccess={(cust) => setCustomerUser(cust)}
           onSignOutCustomer={handleSignOut}
           onOrderSuccess={(order) => {
@@ -972,10 +987,12 @@ export default function App() {
         />
       )}
 
-      {/* Floating WhatsApp and Facebook Social Buttons */}
+      {/* Floating WhatsApp, Bag, and Facebook Social Buttons */}
       <FloatingSocialButtons
         whatsappNumber={storeSettings?.whatsappNumber}
         facebookUrl={storeSettings?.facebookUrl}
+        cartCount={cartItems.reduce((acc, i) => acc + i.quantity, 0)}
+        onOpenCart={() => setIsCartOpen(true)}
       />
 
       {/* Website Ad Manager (Popunder & 160x300 Banner scripts) */}

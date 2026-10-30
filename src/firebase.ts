@@ -283,21 +283,38 @@ export function saveStoredProducts(items: Product[]): void {
 }
 
 export async function fetchCouponsFromFirestore(): Promise<any[]> {
-  const getFallbackCoupons = () => {
+  const getDeletedBlacklist = (): Set<string> => {
     try {
-      const saved = localStorage.getItem('himaya_coupons');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const raw = localStorage.getItem('himaya_deleted_coupons');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return new Set(arr.map(x => String(x).toUpperCase()));
+        }
       }
     } catch {}
-    return [
-      { id: '1', code: 'EID2026', discount: '20% OFF', minSpend: 1000, status: 'Active' },
-      { id: '2', code: 'WELCOME10', discount: '10% OFF', minSpend: 500, status: 'Active' },
-      { id: '3', code: 'FREESHIP', discount: 'Free Shipping', minSpend: 1500, status: 'Active' },
-      { id: '4', code: 'HIMAYA100', discount: '৳100 OFF', minSpend: 800, status: 'Active' },
-      { id: '5', code: 'BDSHOPVIP', discount: '৳250 OFF', minSpend: 2000, status: 'Active' },
-    ];
+    return new Set<string>();
+  };
+
+  const getFallbackCoupons = () => {
+    const deleted = getDeletedBlacklist();
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(c => !deleted.has(String(c.code).toUpperCase()) && !deleted.has(String(c.id).toUpperCase()));
+        }
+      }
+    } catch {}
+    const defaults = [
+      { id: '1', code: 'EID2026', discount: '20% OFF', discountType: 'percentage', discountValue: 20, displayDiscount: '20% OFF', offerTitle: 'ঈদ স্পেশাল ২০% ছাড় অফার', minSpend: 1000, status: 'Active' },
+      { id: '2', code: 'WELCOME10', discount: '10% OFF', discountType: 'percentage', discountValue: 10, displayDiscount: '10% OFF', offerTitle: 'নতুন গ্রাহকদের জন্য ১০% ছাড়', minSpend: 500, status: 'Active' },
+      { id: '3', code: 'FREESHIP', discount: 'Free Shipping', discountType: 'free_shipping', discountValue: 0, displayDiscount: 'Free Shipping', offerTitle: 'ফ্রি ডেলিভারি অফার (Free Shipping)', minSpend: 1500, status: 'Active' },
+      { id: '4', code: 'HIMAYA100', discount: '৳100 OFF', discountType: 'fixed', discountValue: 100, displayDiscount: '৳100 OFF', offerTitle: 'ফ্ল্যাট ৳১০০ ছাড়', minSpend: 800, status: 'Active' },
+      { id: '5', code: 'BDSHOPVIP', discount: '৳250 OFF', discountType: 'fixed', discountValue: 250, displayDiscount: '৳250 OFF', offerTitle: 'ফ্ল্যাট ৳২৫০ ছাড়', minSpend: 2000, status: 'Active' },
+    ].filter(c => !deleted.has(c.code.toUpperCase()) && !deleted.has(c.id.toUpperCase()));
+    return defaults;
   };
 
   if (isQuotaExhausted() || isCacheFresh('coupons')) {
@@ -307,14 +324,19 @@ export async function fetchCouponsFromFirestore(): Promise<any[]> {
   try {
     const snap = await getDocs(collection(db, 'coupons'));
     const items: any[] = [];
+    const deleted = getDeletedBlacklist();
     snap.forEach(docSnap => {
-      items.push({ ...docSnap.data(), id: docSnap.id });
+      const data = docSnap.data();
+      const code = String(data.code || '').toUpperCase();
+      const docId = String(docSnap.id).toUpperCase();
+      if (!deleted.has(code) && !deleted.has(docId)) {
+        items.push({ ...data, id: docSnap.id });
+      }
     });
-    if (items.length > 0) {
-      markCacheFresh('coupons');
-      try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
-      return items;
-    }
+    // Record whatever items snapshot returned (even if empty after admin deleted all)
+    markCacheFresh('coupons');
+    try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
+    return items;
   } catch (err) {
     recordQuotaExceeded(err);
   }
@@ -322,10 +344,29 @@ export async function fetchCouponsFromFirestore(): Promise<any[]> {
 }
 
 export function subscribeToCoupons(onUpdate: (coupons: any[]) => void): Unsubscribe {
-  // Always supply local/fallback coupons immediately
+  const getDeletedBlacklist = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem('himaya_deleted_coupons');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return new Set(arr.map(x => String(x).toUpperCase()));
+        }
+      }
+    } catch {}
+    return new Set<string>();
+  };
+
+  // Supply local/cached coupons immediately
   try {
     const saved = localStorage.getItem('himaya_coupons');
-    if (saved) onUpdate(JSON.parse(saved));
+    if (saved !== null) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        const deleted = getDeletedBlacklist();
+        onUpdate(parsed.filter(c => !deleted.has(String(c.code).toUpperCase()) && !deleted.has(String(c.id).toUpperCase())));
+      }
+    }
   } catch {}
 
   if (isQuotaExhausted()) return () => {};
@@ -335,14 +376,18 @@ export function subscribeToCoupons(onUpdate: (coupons: any[]) => void): Unsubscr
       collection(db, 'coupons'),
       (snapshot) => {
         const items: any[] = [];
+        const deleted = getDeletedBlacklist();
         snapshot.forEach(docSnap => {
-          items.push({ ...docSnap.data(), id: docSnap.id });
+          const data = docSnap.data();
+          const code = String(data.code || '').toUpperCase();
+          const docId = String(docSnap.id).toUpperCase();
+          if (!deleted.has(code) && !deleted.has(docId)) {
+            items.push({ ...data, id: docSnap.id });
+          }
         });
-        if (items.length > 0) {
-          markCacheFresh('coupons');
-          try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
-          onUpdate(items);
-        }
+        markCacheFresh('coupons');
+        try { localStorage.setItem('himaya_coupons', JSON.stringify(items)); } catch {}
+        onUpdate(items);
       },
       (err) => {
         recordQuotaExceeded(err);
@@ -357,15 +402,76 @@ export function subscribeToCoupons(onUpdate: (coupons: any[]) => void): Unsubscr
 export async function saveCouponToFirestore(coupon: any): Promise<void> {
   try {
     const couponId = String(coupon.id || coupon.code).trim();
+    const couponCode = String(coupon.code || '').trim().toUpperCase();
+
+    // Remove from deleted blacklist if admin deliberately saves or re-creates it
+    try {
+      const raw = localStorage.getItem('himaya_deleted_coupons');
+      if (raw) {
+        let deletedList: string[] = JSON.parse(raw);
+        if (Array.isArray(deletedList)) {
+          deletedList = deletedList.filter(x => x.toUpperCase() !== couponCode && x.toUpperCase() !== couponId.toUpperCase());
+          localStorage.setItem('himaya_deleted_coupons', JSON.stringify(deletedList));
+        }
+      }
+    } catch {}
+
     await setDoc(doc(db, 'coupons', couponId), coupon, { merge: true });
+    // Update local cache
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      let list: any[] = saved ? JSON.parse(saved) : [];
+      if (!Array.isArray(list)) list = [];
+      list = [coupon, ...list.filter((c: any) => c.id !== couponId && c.code !== coupon.code)];
+      localStorage.setItem('himaya_coupons', JSON.stringify(list));
+    } catch {}
+    // Call server API
+    fetch('/api/coupons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(coupon)
+    }).catch(() => {});
   } catch (err) {
     recordQuotaExceeded(err);
   }
 }
 
-export async function deleteCouponFromFirestore(couponId: string): Promise<void> {
+export async function deleteCouponFromFirestore(couponId: string, couponCode?: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'coupons', couponId));
+    // Add to deleted coupons blacklist permanently so it never reappears
+    try {
+      const raw = localStorage.getItem('himaya_deleted_coupons');
+      let deletedList: string[] = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(deletedList)) deletedList = [];
+      if (couponId) deletedList.push(String(couponId).toUpperCase());
+      if (couponCode) deletedList.push(String(couponCode).toUpperCase());
+      localStorage.setItem('himaya_deleted_coupons', JSON.stringify(Array.from(new Set(deletedList))));
+    } catch {}
+
+    await deleteDoc(doc(db, 'coupons', couponId)).catch(() => {});
+    if (couponCode && couponCode !== couponId) {
+      await deleteDoc(doc(db, 'coupons', couponCode)).catch(() => {});
+    }
+
+    // Remove from local cache permanently
+    try {
+      const saved = localStorage.getItem('himaya_coupons');
+      if (saved) {
+        let list: any[] = JSON.parse(saved);
+        if (Array.isArray(list)) {
+          list = list.filter((c: any) => 
+            String(c.id).toUpperCase() !== String(couponId).toUpperCase() && 
+            (!couponCode || String(c.code).toUpperCase() !== String(couponCode).toUpperCase())
+          );
+          localStorage.setItem('himaya_coupons', JSON.stringify(list));
+        }
+      }
+    } catch {}
+
+    // Call server API to delete from store.json
+    fetch(`/api/coupons/${encodeURIComponent(couponId)}`, {
+      method: 'DELETE'
+    }).catch(() => {});
   } catch (err) {
     recordQuotaExceeded(err);
   }

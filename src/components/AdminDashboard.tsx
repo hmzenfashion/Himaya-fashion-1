@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Order, BannerAd, StoreSettings, AdConfiguration, WebsiteAdItem, AdType, AdPlacement } from '../types';
+import { Product, Order, BannerAd, StoreSettings, AdConfiguration, WebsiteAdItem, AdType, AdPlacement, CouponItem } from '../types';
 import { 
   LayoutDashboard, 
   Package, 
@@ -44,6 +44,7 @@ import {
   Phone,
   Smartphone,
   Eye,
+  EyeOff,
   XCircle,
   RotateCcw,
   Archive,
@@ -51,7 +52,9 @@ import {
   Pin,
   Flame,
   Send,
-  Bot
+  Bot,
+  Save,
+  Zap
 } from 'lucide-react';
 import { 
   saveProductToFirestore, 
@@ -536,13 +539,7 @@ type AdminTab =
   | 'app_install'
   | 'telegram_bot';
 
-interface CouponItem {
-  id: string;
-  code: string;
-  discount: string;
-  minSpend: number;
-  status: 'Active' | 'Expired';
-}
+
 
 interface ReviewItem {
   id: string;
@@ -1192,21 +1189,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Coupons state (persisted in local storage & Firestore)
   const [coupons, setCoupons] = useState<CouponItem[]>(() => {
-    if (initialCoupons && initialCoupons.length > 0) return initialCoupons;
+    if (initialCoupons && Array.isArray(initialCoupons)) return initialCoupons;
     try {
       const saved = localStorage.getItem('himaya_coupons');
-      if (saved) {
+      if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
-    return [
-      { id: '1', code: 'EID2026', discount: '20% OFF', minSpend: 1000, status: 'Active' },
-      { id: '2', code: 'WELCOME10', discount: '10% OFF', minSpend: 500, status: 'Active' },
-      { id: '3', code: 'FREESHIP', discount: 'Free Shipping', minSpend: 1500, status: 'Active' },
-      { id: '4', code: 'HIMAYA100', discount: '৳100 OFF', minSpend: 800, status: 'Active' },
-      { id: '5', code: 'BDSHOPVIP', discount: '৳250 OFF', minSpend: 2000, status: 'Active' },
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -1217,6 +1208,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponDiscount, setNewCouponDiscount] = useState('');
   const [newCouponMinSpend, setNewCouponMinSpend] = useState('500');
+  const [newCouponIsHidden, setNewCouponIsHidden] = useState(false);
+  const [newCouponSingleUse, setNewCouponSingleUse] = useState(true);
+  const [editingCoupon, setEditingCoupon] = useState<CouponItem | null>(null);
 
   // Categories state
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -1553,14 +1547,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           setToastMessage(`অর্ডার #${id} অ্যাডমিন প্যানেল থেকে সফলভাবে সরানো হয়েছে! ('সরানো অর্ডার' ট্যাবে পাওয়া যাবে)`);
         }
       } else if (type === 'coupon') {
+        const targetCoupon = coupons.find(c => c.id === id);
         const updatedCoupons = coupons.filter(c => c.id !== id);
         setCoupons(updatedCoupons);
         onUpdateCoupons?.(updatedCoupons);
         try {
           localStorage.setItem('himaya_coupons', JSON.stringify(updatedCoupons));
         } catch {}
-        deleteCouponFromFirestore(id);
-        setToastMessage(`কুপন/ভাউচার "${title}" সফলভাবে ডিলিট করা হয়েছে!`);
+        deleteCouponFromFirestore(id, targetCoupon?.code);
+        setToastMessage(`কুপন/ভাউচার "${title}" স্থায়ীভাবে ডিলিট করা হয়েছে!`);
       } else if (type === 'category') {
         const updatedCustom = customCategories.filter(c => c !== id);
         const updatedDeleted = Array.from(new Set([...deletedCategories, id]));
@@ -1702,26 +1697,133 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleAddCoupon = (e: React.FormEvent) => {
+  const handleSaveCoupon = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCouponCode.trim() || !newCouponDiscount.trim()) return;
-    const newCoupon: CouponItem = {
-      id: String(Date.now()),
+    if (!newCouponCode.trim() || !newCouponDiscount.trim()) {
+      setToastMessage("দয়া করে কুপন কোড ও ডিসকাউন্টের পরিমাণ লিখুন!");
+      return;
+    }
+
+    const discountStr = newCouponDiscount.trim();
+    const discountType = discountStr.includes('%')
+      ? 'percentage'
+      : discountStr.toLowerCase().includes('free')
+      ? 'free_shipping'
+      : 'fixed';
+    const numMatch = discountStr.match(/([0-9]+(\.[0-9]+)?)/);
+    const discountVal = numMatch ? parseFloat(numMatch[1]) : 10;
+
+    const couponId = editingCoupon ? editingCoupon.id : ("coup-" + Date.now());
+    const createdAt = editingCoupon?.createdAt || new Date().toISOString();
+
+    const savedCoupon: CouponItem = {
+      id: couponId,
       code: newCouponCode.trim().toUpperCase(),
-      discount: newCouponDiscount.trim(),
-      minSpend: Number(newCouponMinSpend) || 500,
-      status: 'Active'
+      discountType,
+      discountValue: discountVal,
+      displayDiscount: discountStr,
+      discount: discountStr,
+      offerTitle: discountStr,
+      minSpend: Number(newCouponMinSpend) || 0,
+      status: editingCoupon ? editingCoupon.status : 'Active',
+      isHidden: newCouponIsHidden,
+      singleUse: newCouponSingleUse,
+      deleteOnUse: newCouponSingleUse,
+      createdAt
     };
-    const updated = [newCoupon, ...coupons];
+
+    let updated: CouponItem[];
+    if (editingCoupon) {
+      updated = coupons.map(c => c.id === couponId ? savedCoupon : c);
+      setToastMessage(`কুপন "${savedCoupon.code}" সফলভাবে সেভ করা হয়েছে!`);
+    } else {
+      updated = [savedCoupon, ...coupons.filter(c => c.id !== couponId && c.code.toLowerCase() !== savedCoupon.code.toLowerCase())];
+      setToastMessage(`নতুন কুপন "${savedCoupon.code}" ${newCouponIsHidden ? '(গোপন কুপন)' : ''} সফলভাবে সেভ করা হয়েছে!`);
+    }
+
     setCoupons(updated);
     onUpdateCoupons?.(updated);
     try {
       localStorage.setItem('himaya_coupons', JSON.stringify(updated));
     } catch {}
-    saveCouponToFirestore(newCoupon);
+    saveCouponToFirestore(savedCoupon);
+
+    setEditingCoupon(null);
     setNewCouponCode('');
     setNewCouponDiscount('');
-    setToastMessage(`নতুন কুপন "${newCoupon.code}" সফলভাবে তৈরি করা হয়েছে!`);
+    setNewCouponMinSpend('500');
+    setNewCouponIsHidden(false);
+    setNewCouponSingleUse(true);
+  };
+
+  const handleAddCoupon = handleSaveCoupon;
+
+  const handleEditCoupon = (cp: CouponItem) => {
+    setEditingCoupon(cp);
+    setNewCouponCode(cp.code);
+    setNewCouponDiscount(cp.displayDiscount || cp.discount || '');
+    setNewCouponMinSpend(String(cp.minSpend || 0));
+    setNewCouponIsHidden(Boolean(cp.isHidden));
+    setNewCouponSingleUse(cp.singleUse !== undefined ? Boolean(cp.singleUse) : true);
+    setToastMessage(`কুপন "${cp.code}" এডিট মোডে লোড হয়েছে। নিচে ফর্ম পরিবর্তন করে সেভ করুন।`);
+  };
+
+  const handleCancelEditCoupon = () => {
+    setEditingCoupon(null);
+    setNewCouponCode('');
+    setNewCouponDiscount('');
+    setNewCouponMinSpend('500');
+    setNewCouponIsHidden(false);
+    setNewCouponSingleUse(true);
+  };
+
+
+  const handleDeleteCouponDirect = async (couponId: string, couponCode: string) => {
+    try {
+      const updatedCoupons = coupons.filter(c => c.id !== couponId && c.code.toLowerCase() !== couponCode.toLowerCase());
+      setCoupons(updatedCoupons);
+      onUpdateCoupons?.(updatedCoupons);
+      try {
+        localStorage.setItem('himaya_coupons', JSON.stringify(updatedCoupons));
+      } catch {}
+      await deleteCouponFromFirestore(couponId, couponCode);
+      setToastMessage(`কুপন "${couponCode}" স্থায়ীভাবে ডিলিট করা হয়েছে!`);
+    } catch (err) {
+      console.error("Delete coupon error:", err);
+      setToastMessage("কুপন ডিলিট করতে সমস্যা হয়েছে!");
+    }
+  };
+
+  const handleMarkCouponSold = async (couponId: string, couponCode: string) => {
+    try {
+      const updatedCoupons = coupons.filter(c => c.id !== couponId && c.code.toLowerCase() !== couponCode.toLowerCase());
+      setCoupons(updatedCoupons);
+      onUpdateCoupons?.(updatedCoupons);
+      try {
+        localStorage.setItem('himaya_coupons', JSON.stringify(updatedCoupons));
+      } catch {}
+      await deleteCouponFromFirestore(couponId, couponCode);
+      setToastMessage(`কুপন "${couponCode}" সেল হয়েছে এবং স্থায়ীভাবে ডিলিট করা হয়েছে!`);
+    } catch (err) {
+      console.error("Mark sold error:", err);
+      setToastMessage("কুপন ডিলিট করতে সমস্যা হয়েছে!");
+    }
+  };
+
+  const handleToggleCouponVisibility = (couponId: string) => {
+    const updated = coupons.map(c => 
+      c.id === couponId 
+        ? { ...c, isHidden: !c.isHidden }
+        : c
+    );
+    setCoupons(updated);
+    onUpdateCoupons?.(updated);
+    try {
+      localStorage.setItem('himaya_coupons', JSON.stringify(updated));
+    } catch {}
+    const toggled = updated.find(c => c.id === couponId);
+    if (toggled) saveCouponToFirestore(toggled);
+    setToastMessage(toggled?.isHidden ? 'কুপনটি গোপন (Secret) করা হয়েছে! ওয়েবসাইটে দৃশ্যমান হবে না।' : 'কুপনটি ওয়েবসাইটে দৃশ্যমান (Public) করা হয়েছে!');
   };
 
   const handleToggleCouponStatus = (couponId: string) => {
@@ -2068,9 +2170,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setToastMessage('✅ টেলিগ্রামে ছবিসহ টেস্ট নোটিফিকেশন সফল হয়েছে!');
       }
     } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      const is401 = errMsg.includes('401') || errMsg.toLowerCase().includes('unauthorized');
       setTelegramTestResult({
         success: false,
-        message: err.message || 'টেলিগ্রাম বার্তা পাঠানো ব্যর্থ হয়েছে। টোকেন বা চ্যাট আইডি যাচাই করুন।'
+        message: is401
+          ? '⚠️ আপনার টেলিগ্রাম বট টোকেনটি বাতিল বা আনঅথরাইজড (401 Unauthorized)। অনুগ্রহ করে Telegram অ্যাপে @BotFather-এ গিয়ে বটের জন্য নতুন Token জেনারেট করে এখানে পেস্ট করুন এবং "সেটিংস সেভ করুন" বাটনে চাপ দিন।'
+          : (errMsg || 'টেলিগ্রাম বার্তা পাঠানো ব্যর্থ হয়েছে। টোকেন বা চ্যাট আইডি যাচাই করুন।')
       });
     } finally {
       setIsTestingTelegram(false);
@@ -4413,44 +4519,105 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <p className="text-xs text-slate-500">নিচের ফর্মটি ব্যবহার করে প্রথম ডিসকাউন্ট কুপন যুক্ত করুন।</p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {coupons.map(cp => (
-                          <div key={cp.id} className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 relative group hover:border-emerald-300 transition-all">
-                            <div className="flex items-center justify-between">
+                          <div key={cp.id} className={`p-5 bg-white rounded-2xl border shadow-xs space-y-3 relative group transition-all ${
+                            cp.isHidden ? 'border-purple-300 bg-purple-50/20' : 'border-slate-200 hover:border-emerald-300'
+                          }`}>
+                            <div className="flex items-center justify-between gap-1 flex-wrap">
                               <span className="font-mono font-extrabold text-sm tracking-widest text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
                                 {cp.code}
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleCouponStatus(cp.id)}
-                                title="Click to toggle Active / Expired status"
-                                className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full cursor-pointer transition-colors ${
-                                  cp.status === 'Active'
-                                    ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                    : 'bg-slate-150 text-slate-600 hover:bg-slate-200'
-                                }`}
-                              >
-                                {cp.status}
-                              </button>
+                              <div className="flex items-center gap-1">
+                                {cp.isHidden && (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200 inline-flex items-center gap-0.5" title="এই কুপনটি ওয়েবসাইটে কাস্টমারদের কাছে হাইড করা আছে">
+                                    🔒 সিক্রেট
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleCouponStatus(cp.id)}
+                                  title="Click to toggle Active / Expired status"
+                                  className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full cursor-pointer transition-colors ${
+                                    cp.status === 'Active'
+                                      ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                      : 'bg-slate-150 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {cp.status}
+                                </button>
+                              </div>
                             </div>
+
                             <div>
                               <div className="text-xl font-black text-slate-900">{cp.discount}</div>
                               <div className="text-[11px] text-slate-500">নূন্যতম অর্ডার: ৳{cp.minSpend.toLocaleString()}</div>
+                              {cp.isHidden ? (
+                                <p className="text-[10px] text-purple-700 font-semibold mt-1">
+                                  🔒 সিক্রেট কুপন (ওয়েবসাইটে প্রদর্শিত হবে না)
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-emerald-700 font-medium mt-1">
+                                  🌐 পাবলিক কুপন (ওয়েবসাইটে দৃশ্যমান)
+                                </p>
+                              )}
+                              <p className="text-[10px] text-amber-700 font-medium mt-0.5 flex items-center gap-1">
+                                <Zap className="w-2.5 h-2.5 text-amber-600" />
+                                <span>কাস্টমার অর্ডার করলে স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে</span>
+                              </p>
                             </div>
-                            <div className="flex items-center gap-2 pt-1">
+
+                            {/* One-Click Mark Sold & Delete Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleMarkCouponSold(cp.id, cp.code)}
+                              className="w-full py-1.5 px-2.5 bg-amber-50 hover:bg-amber-100 active:scale-98 text-amber-900 text-xs font-bold rounded-xl border border-amber-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                              title="কুপনটি বিক্রি/ব্যবহার হয়েছে—এখান থেকে স্থায়ীভাবে ডিলিট করুন"
+                            >
+                              <Zap className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <span>⚡ সেল হয়েছে (Delete Sold)</span>
+                            </button>
+
+                            {/* Action Buttons: Edit, Copy, Hide/Show, Delete */}
+                            <div className="flex items-center gap-1.5 pt-1">
                               <button
-                                onClick={() => handleCopyCoupon(cp.code)}
-                                className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                type="button"
+                                onClick={() => handleEditCoupon(cp)}
+                                className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                title="কুপনের তথ্য এডিট করুন"
                               >
-                                <Copy className="w-3.5 h-3.5 text-slate-500" />
-                                <span>{copiedCoupon === cp.code ? 'Copied!' : 'Copy Code'}</span>
+                                <Edit className="w-3 h-3 text-slate-600" />
+                                <span>Edit</span>
                               </button>
                               <button
-                                onClick={() => handlePromptDeleteCoupon(cp)}
-                                className="p-2 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors cursor-pointer"
-                                title="Delete Coupon (কুপন ডিলিট করুন)"
+                                type="button"
+                                onClick={() => handleCopyCoupon(cp.code)}
+                                className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                title="কোড কপি করুন"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Copy className="w-3 h-3 text-slate-500" />
+                                <span>{copiedCoupon === cp.code ? 'Copied' : 'Copy'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCouponVisibility(cp.id)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                  cp.isHidden
+                                    ? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                                title={cp.isHidden ? "ওয়েবসাইটে দৃশ্যমান (Public) করুন" : "ওয়েবসাইটে গোপন (Secret) করুন"}
+                              >
+                                {cp.isHidden ? <EyeOff className="w-3.5 h-3.5 text-purple-700" /> : <Eye className="w-3.5 h-3.5 text-slate-500" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCouponDirect(cp.id, cp.code)}
+                                className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg transition-all border border-rose-200 hover:border-rose-600 cursor-pointer text-xs font-bold flex items-center gap-1"
+                                title="Delete Coupon (স্থায়ীভাবে ডিলিট করুন)"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Delete</span>
                               </button>
                             </div>
                           </div>
@@ -4458,21 +4625,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </div>
                     )}
 
-                    {/* Add Coupon Form */}
+                    {/* Add / Edit Coupon Form with Save Button */}
                     <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs max-w-lg space-y-4">
-                      <h5 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                        <Plus className="w-4 h-4 text-emerald-600" />
-                        <span>নতুন ডিসকাউন্ট কুপন যুক্ত করুন (Add Promo Coupon)</span>
-                      </h5>
-                      <form onSubmit={handleAddCoupon} className="space-y-3">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                        <h5 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                          {editingCoupon ? (
+                            <>
+                              <Edit className="w-4 h-4 text-amber-600" />
+                              <span>কুপন এডিট করুন (Edit Coupon: {editingCoupon.code})</span>
+                            </>
+                          ) : (
+                            <>
+                              <Save className="w-4 h-4 text-emerald-600" />
+                              <span>কুপন সেভ / নতুন তৈরি করুন (Save & Add Coupon)</span>
+                            </>
+                          )}
+                        </h5>
+                        {editingCoupon && (
+                          <button
+                            type="button"
+                            onClick={handleCancelEditCoupon}
+                            className="text-xs text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                          >
+                            এডিট বাতিল করুন
+                          </button>
+                        )}
+                      </div>
+
+                      <form onSubmit={handleSaveCoupon} className="space-y-3">
                         <div>
                           <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1">Coupon Code (কুপন কোড)</label>
                           <input
                             type="text"
-                            placeholder="e.g. SUMMER25, FLASH50, EID2026"
+                            placeholder="e.g. SUMMER25, FLASH50, EID2026, SECRET50"
                             value={newCouponCode}
                             onChange={(e) => setNewCouponCode(e.target.value)}
-                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900 uppercase font-mono"
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900 uppercase font-mono font-bold"
                           />
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -4497,13 +4685,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             />
                           </div>
                         </div>
-                        <button
-                          type="submit"
-                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow transition-colors cursor-pointer flex items-center gap-1.5"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add Coupon (কুপন যুক্ত করুন)</span>
-                        </button>
+
+                        {/* Secret / Hidden Coupon Switch */}
+                        <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+                              <span>🔒 গোপন / সিক্রেট কুপন (Hidden Coupon)</span>
+                            </div>
+                            <p className="text-[10px] text-purple-700 mt-0.5">
+                              অন করলে কুপনটি ওয়েবসাইটে হাইড থাকবে। আপনি যা লিখে দেবেন, কাস্টমার সঠিকভাবে টাইপ করলে কাজ করবে।
+                            </p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={newCouponIsHidden}
+                              onChange={(e) => setNewCouponIsHidden(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                          </label>
+                        </div>
+
+                        {/* Auto-Delete on sale notice */}
+                        <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                              <Zap className="w-3.5 h-3.5 text-amber-600" />
+                              <span>⚡ সেল হলে স্বয়ংক্রিয়ভাবে ডিলিট (Auto Delete on Sale)</span>
+                            </div>
+                            <p className="text-[10px] text-amber-700 mt-0.5">
+                              কাস্টমার এই কুপন ব্যবহার করে অর্ডার সম্পন্ন করলে কুপনটি সাথে সাথে স্বয়ংক্রিয়ভাবে মুছে যাবে।
+                            </p>
+                          </div>
+                          <span className="text-[11px] font-extrabold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                            Active
+                          </span>
+                        </div>
+
+                        {/* Action Submit Buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="submit"
+                            className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>{editingCoupon ? 'পরিবর্তন সেভ করুন (Save Changes)' : 'কুপন সেভ করুন (Save Coupon)'}</span>
+                          </button>
+                          {editingCoupon && (
+                            <button
+                              type="button"
+                              onClick={handleCancelEditCoupon}
+                              className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                            >
+                              বাতিল
+                            </button>
+                          )}
+                        </div>
                       </form>
                     </div>
                   </div>

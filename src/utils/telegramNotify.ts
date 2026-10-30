@@ -9,8 +9,58 @@ function escapeTelegramHtml(unsafe?: string): string {
 }
 
 /**
- * Dispatches an order notification directly to Telegram Bot API with product photo.
- * Works seamlessly in both browser (Netlify/static deployment) and backend.
+ * Converts a base64 data URI, remote URL, or relative URL to a Blob in the browser.
+ */
+async function resolveImageBlob(imgStr?: string): Promise<Blob | null> {
+  if (!imgStr) return null;
+  const trimmed = imgStr.trim();
+
+  // 1. Base64 Data URI
+  if (trimmed.startsWith('data:image/')) {
+    try {
+      const parts = trimmed.split(',');
+      if (parts.length < 2) return null;
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const byteString = atob(parts[1]);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      return new Blob([ab], { type: mimeType });
+    } catch (e) {
+      console.warn("Base64 to blob conversion failed:", e);
+      return null;
+    }
+  }
+
+  // 2. Remote HTTP/HTTPS URL
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const res = await fetch(trimmed);
+      if (res.ok) return await res.blob();
+    } catch {}
+    return null;
+  }
+
+  // 3. Relative path (e.g. /assets/... or /uploads/...)
+  if (trimmed.startsWith('/')) {
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const res = await fetch(origin + trimmed);
+      if (res.ok) return await res.blob();
+    } catch {}
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Dispatches an order notification directly to Telegram Bot API.
+ * Guarantees that when a customer bags and orders multiple products together,
+ * every ordered product's photo and full details (size, color, qty, price) are sent to Telegram!
  */
 export async function sendTelegramOrderNotificationClient(
   order: Order,
@@ -39,16 +89,7 @@ export async function sendTelegramOrderNotificationClient(
 
     const isFirst = order.isFirstOrder ?? true;
 
-    // Identify primary product photo
-    let primaryImage = '';
-    for (const item of (order.items || [])) {
-      if (item.image && typeof item.image === 'string' && item.image.trim()) {
-        primaryImage = item.image.trim();
-        break;
-      }
-    }
-
-    // Prepare items list text
+    // Build item text breakdown
     const itemsList = (order.items || []).map((item, idx) => {
       let t = `<b>${idx + 1}. ${escapeTelegramHtml(item.title)}</b>\n`;
       t += `   • সাইজ: <code>${escapeTelegramHtml(item.size || 'Free Size')}</code> | কালার: <code>${escapeTelegramHtml(item.color || 'Default')}</code>\n`;
@@ -113,99 +154,275 @@ export async function sendTelegramOrderNotificationClient(
       url: 'https://himayafashion.netlify.app'
     });
     inlineKeyboard.push(buttonRow);
-
     const replyMarkup = { inline_keyboard: inlineKeyboard };
 
-    // Caption limit in Telegram sendPhoto is 1024 chars
-    let fullMessageHtml = `${headerHtml}${itemsList}${footerHtml}`;
-    let captionHtml = fullMessageHtml;
-    if (captionHtml.length > 1000) {
-      const truncatedItems = (order.items || []).slice(0, 2).map((item, idx) => 
-        `<b>${idx + 1}. ${escapeTelegramHtml(item.title)}</b> (${item.quantity}টি - ৳${item.price})`
-      ).join('\n') + `\n<i>...এবং আরও ${(order.items || []).length - 2}টি পণ্য</i>`;
-      captionHtml = `${headerHtml}${truncatedItems}${footerHtml}`;
-      if (captionHtml.length > 1000) {
-        captionHtml = captionHtml.substring(0, 995) + '...';
-      }
+    const fullInvoiceHtml = `${headerHtml}${itemsList}${footerHtml}`;
+
+    // Collect all items with resolved image blobs or URLs
+    const items = order.items || [];
+    const resolvedItems: Array<{
+      title: string;
+      size: string;
+      color: string;
+      quantity: number;
+      price: number;
+      image: string;
+      blob: Blob | null;
+    }> = [];
+
+    for (const it of items) {
+      const rawImg = (it.image || '').trim();
+      const blob = rawImg ? await resolveImageBlob(rawImg) : null;
+      resolvedItems.push({
+        title: it.title || 'Product',
+        size: it.size || 'Free Size',
+        color: it.color || 'Standard',
+        quantity: it.quantity || 1,
+        price: it.price || 0,
+        image: rawImg,
+        blob
+      });
     }
 
-    // Try sending photo
-    if (primaryImage) {
+    const itemsWithPhotos = resolvedItems.filter(i => i.blob !== null || i.image.startsWith('http://') || i.image.startsWith('https://'));
+
+    // ==========================================
+    // CASE A: Customer ordered MULTIPLE items in bag (>1 item with photos)
+    // ==========================================
+    if (itemsWithPhotos.length > 1) {
+      let albumSent = false;
+
+      // Attempt 1: Send as grouped photo album (sendMediaGroup)
       try {
-        // Case 1: Remote HTTP/HTTPS URL
-        if (primaryImage.startsWith('http://') || primaryImage.startsWith('https://')) {
-          const photoUrl = `https://api.telegram.org/bot${botToken}/sendPhoto`;
-          const photoRes = await fetch(photoUrl, {
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+
+        const mediaGroupPayload: any[] = [];
+        const albumBatch = itemsWithPhotos.slice(0, 10); // Telegram maximum 10 items per album
+
+        for (let idx = 0; idx < albumBatch.length; idx++) {
+          const item = albumBatch[idx];
+          const itemTotal = (item.price * item.quantity).toFixed(2);
+          const caption = idx === 0
+            ? `🛍️ <b>অর্ডার #${escapeTelegramHtml(order.id)} [পণ্য ১/${items.length}]</b>\n<b>${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`
+            : `👗 <b>[পণ্য ${idx + 1}/${items.length}] ${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`;
+
+          if (item.blob) {
+            const attachName = `photo_${idx}`;
+            formData.append(attachName, item.blob, `product_${idx + 1}.jpg`);
+            mediaGroupPayload.push({
+              type: 'photo',
+              media: `attach://${attachName}`,
+              caption,
+              parse_mode: 'HTML'
+            });
+          } else {
+            mediaGroupPayload.push({
+              type: 'photo',
+              media: item.image,
+              caption,
+              parse_mode: 'HTML'
+            });
+          }
+        }
+
+        formData.append('media', JSON.stringify(mediaGroupPayload));
+
+        const mediaRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMediaGroup`, {
+          method: 'POST',
+          body: formData
+        });
+        const mediaData = await mediaRes.json().catch(() => null);
+
+        if (mediaRes.ok && mediaData?.ok) {
+          albumSent = true;
+          console.log(`✅ Telegram sendMediaGroup succeeded with ${albumBatch.length} item photos for order:`, order.id);
+        } else if (mediaRes.status === 401 || mediaData?.error_code === 401) {
+          console.warn("[Telegram] Bot token is unauthorized (401). Please update Bot Token in Admin Settings.");
+          return { success: false, error: "Telegram Bot Token is unauthorized (401). Please check Bot Token in Admin Settings." };
+        } else {
+          console.warn("[Telegram] sendMediaGroup note:", mediaData?.description || 'album not sent');
+        }
+      } catch (albumErr) {
+        console.warn("[Telegram] sendMediaGroup exception:", albumErr);
+      }
+
+      // Attempt 2: If sendMediaGroup didn't go through, send individual sendPhoto for EACH ordered item!
+      if (!albumSent) {
+        for (let idx = 0; idx < itemsWithPhotos.length; idx++) {
+          const item = itemsWithPhotos[idx];
+          const itemTotal = (item.price * item.quantity).toFixed(2);
+          const caption = `📦 <b>[পণ্য ${idx + 1}/${items.length}] ${escapeTelegramHtml(item.title)}</b>\n• সাইজ: <code>${escapeTelegramHtml(item.size)}</code> | কালার: <code>${escapeTelegramHtml(item.color)}</code>\n• পরিমাণ: <b>${item.quantity}টি</b> x ৳${item.price} = <b>৳${itemTotal}</b>`;
+
+          try {
+            if (item.blob) {
+              const itemForm = new FormData();
+              itemForm.append('chat_id', chatId);
+              itemForm.append('caption', caption);
+              itemForm.append('parse_mode', 'HTML');
+              itemForm.append('photo', item.blob, `product_${idx + 1}.jpg`);
+              const pRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                method: 'POST',
+                body: itemForm
+              });
+              if (pRes.status === 401) {
+                console.warn("[Telegram] Bot token is unauthorized (401). Stopping photo dispatch.");
+                return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+              }
+            } else if (item.image) {
+              const pRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  photo: item.image,
+                  caption,
+                  parse_mode: 'HTML'
+                })
+              });
+              if (pRes.status === 401) {
+                console.warn("[Telegram] Bot token is unauthorized (401). Stopping photo dispatch.");
+                return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+              }
+            }
+          } catch (singlePhotoErr) {
+            console.warn(`[Telegram] sendPhoto for item ${idx + 1} note:`, singlePhotoErr);
+          }
+        }
+      }
+
+      // Now send the complete Grand Order Invoice with customer address and WhatsApp button
+      const invoiceRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: fullInvoiceHtml,
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup
+        })
+      });
+      const invoiceData = await invoiceRes.json().catch(() => null);
+
+      if (invoiceRes.ok && invoiceData?.ok) {
+        return { success: true, withPhoto: true };
+      }
+      if (invoiceRes.status === 401 || invoiceData?.error_code === 401) {
+        console.warn("[Telegram] Bot token is unauthorized (401). Please update Bot Token in Admin Settings.");
+        return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+      }
+      return { success: false, error: invoiceData?.description || 'Invoice send failed' };
+    }
+
+    // ==========================================
+    // CASE B: Customer ordered SINGLE item with photo
+    // ==========================================
+    if (itemsWithPhotos.length === 1) {
+      const singleItem = itemsWithPhotos[0];
+      let captionHtml = fullInvoiceHtml;
+      let sendInvoiceSeparately = false;
+
+      if (captionHtml.length > 1000) {
+        captionHtml = `🛍️ <b>নতুন অর্ডার #${escapeTelegramHtml(order.id)}</b>\n` +
+          `• পণ্য: <b>${escapeTelegramHtml(singleItem.title)}</b>\n` +
+          `• পরিমাণ: ${singleItem.quantity}টি | মূল্য: ৳${singleItem.price}\n` +
+          `• মোট প্রদেয়: <b>৳${order.totalAmount.toFixed(2)}</b>\n` +
+          `• গ্রাহক: <b>${escapeTelegramHtml(order.customerName)}</b> (${escapeTelegramHtml(order.phone)})\n` +
+          `• ঠিকানা: ${escapeTelegramHtml(order.address)}`;
+        sendInvoiceSeparately = true;
+      }
+
+      try {
+        let photoSent = false;
+        if (singleItem.blob) {
+          const form = new FormData();
+          form.append('chat_id', chatId);
+          form.append('caption', captionHtml);
+          form.append('parse_mode', 'HTML');
+          if (!sendInvoiceSeparately) {
+            form.append('reply_markup', JSON.stringify(replyMarkup));
+          }
+          form.append('photo', singleItem.blob, 'product_image.jpg');
+
+          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+            method: 'POST',
+            body: form
+          });
+          const photoData = await photoRes.json().catch(() => null);
+          if (photoRes.ok && photoData?.ok) {
+            photoSent = true;
+          } else if (photoRes.status === 401 || photoData?.error_code === 401) {
+            console.warn("[Telegram] Bot token is unauthorized (401). Please update Bot Token in Admin Settings.");
+            return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+          }
+        } else if (singleItem.image.startsWith('http://') || singleItem.image.startsWith('https://')) {
+          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: chatId,
-              photo: primaryImage,
+              photo: singleItem.image,
               caption: captionHtml,
               parse_mode: 'HTML',
-              reply_markup: replyMarkup
+              reply_markup: sendInvoiceSeparately ? undefined : replyMarkup
             })
           });
           const photoData = await photoRes.json().catch(() => null);
           if (photoRes.ok && photoData?.ok) {
-            console.log("✅ Telegram client sendPhoto succeeded with remote URL for order:", order.id);
-            return { success: true, withPhoto: true };
-          }
-        } 
-        // Case 2: Base64 Data URL in browser
-        else if (primaryImage.startsWith('data:image/')) {
-          const byteString = atob(primaryImage.split(',')[1]);
-          const mimeString = primaryImage.split(',')[0].split(':')[1].split(';')[0];
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let i = 0; i < byteString.length; i++) {
-            ia[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([ab], { type: mimeString });
-
-          const formData = new FormData();
-          formData.append('chat_id', chatId);
-          formData.append('caption', captionHtml);
-          formData.append('parse_mode', 'HTML');
-          formData.append('reply_markup', JSON.stringify(replyMarkup));
-          formData.append('photo', blob, 'product_image.jpg');
-
-          const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
-            method: 'POST',
-            body: formData
-          });
-          const photoData = await photoRes.json().catch(() => null);
-          if (photoRes.ok && photoData?.ok) {
-            console.log("✅ Telegram client sendPhoto succeeded with base64 blob for order:", order.id);
-            return { success: true, withPhoto: true };
+            photoSent = true;
+          } else if (photoRes.status === 401 || photoData?.error_code === 401) {
+            console.warn("[Telegram] Bot token is unauthorized (401). Please update Bot Token in Admin Settings.");
+            return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
           }
         }
+
+        if (photoSent) {
+          if (sendInvoiceSeparately) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: fullInvoiceHtml,
+                parse_mode: 'HTML',
+                reply_markup: replyMarkup
+              })
+            });
+          }
+          return { success: true, withPhoto: true };
+        }
       } catch (photoErr) {
-        console.warn("[Telegram] Client sendPhoto failed, falling back to sendMessage:", photoErr);
+        console.warn("[Telegram] Client single sendPhoto note:", photoErr);
       }
     }
 
-    // Fallback to text sendMessage
+    // ==========================================
+    // CASE C: Fallback to text sendMessage
+    // ==========================================
     const msgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: fullMessageHtml,
+        text: fullInvoiceHtml,
         parse_mode: 'HTML',
         reply_markup: replyMarkup
       })
     });
     const msgData = await msgRes.json().catch(() => null);
+    if (msgRes.status === 401 || msgData?.error_code === 401) {
+      console.warn("[Telegram] Bot token is unauthorized (401). Please update Bot Token in Admin Settings.");
+      return { success: false, error: "Telegram Bot Token is unauthorized (401)" };
+    }
     if (!msgRes.ok || !msgData?.ok) {
-      console.error("[Telegram] Client sendMessage failed:", msgData);
+      console.warn("[Telegram] Client sendMessage note:", msgData?.description);
       return { success: false, error: msgData?.description || 'Failed to send Telegram message' };
     }
 
     console.log("✅ Telegram client sendMessage succeeded for order:", order.id);
     return { success: true, withPhoto: false };
   } catch (err: any) {
-    console.error("[Telegram] Client dispatch exception:", err);
+    console.warn("[Telegram] Client dispatch note:", err?.message || err);
     return { success: false, error: err.message || 'Notification failed' };
   }
 }
