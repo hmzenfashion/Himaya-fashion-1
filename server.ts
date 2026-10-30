@@ -181,7 +181,7 @@ const defaultSettings: StoreSettings = {
   appDownloadNotes: "Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.",
   appButtonText: "Download apps",
   isAppDownloadEnabled: true,
-  telegramBotToken: "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA",
+  telegramBotToken: "9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI",
   telegramChatId: "6333005937",
   isTelegramNotificationsEnabled: true
 };
@@ -657,7 +657,7 @@ async function sendTelegramOrderNotification(order: Order, customSettings?: Stor
   try {
     const data = getStoreData();
     const settings = customSettings || data.settings || defaultSettings;
-    const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA";
+    const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI";
     const botToken = (rawToken || "").replace(/\s+/g, '').trim();
     const chatId = (settings.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
 
@@ -1055,7 +1055,7 @@ app.post("/api/telegram/test", async (req, res) => {
   try {
     const { botToken, chatId } = req.body;
     const data = getStoreData();
-    const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA";
+    const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || "9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI";
     const token = (rawToken || "").replace(/\s+/g, '').trim();
     const chat = (chatId || data.settings?.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
 

@@ -67,7 +67,7 @@ export async function sendTelegramOrderNotificationClient(
   settings?: StoreSettings | null
 ): Promise<{ success: boolean; withPhoto?: boolean; error?: string }> {
   try {
-    const rawToken = settings?.telegramBotToken || "8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA";
+    const rawToken = settings?.telegramBotToken || "9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI";
     const botToken = (rawToken || "").replace(/\s+/g, '').trim();
     const chatId = (settings?.telegramChatId || "6333005937").trim();
 
