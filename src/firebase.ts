@@ -150,11 +150,11 @@ export function isQuotaExhausted(): boolean {
 let hasLoggedQuotaNotice = false;
 
 export function recordQuotaExceeded(err?: unknown): void {
-  const errMsg = err instanceof Error ? err.message : String(err || '');
+  const errMsg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
   const isQuota = errMsg.includes('quota') || 
                   errMsg.includes('resource-exhausted') || 
-                  errMsg.includes('Quota exceeded') ||
-                  errMsg.includes('RESOURCE_EXHAUSTED');
+                  errMsg.includes('resource_exhausted') ||
+                  errMsg.includes('limit exceeded');
   
   if (isQuota || !err) {
     isQuotaExceededMemory = true;
@@ -526,6 +526,7 @@ export async function seedProductsIfEmpty(): Promise<void> {
 }
 
 export async function seedBannersIfEmpty(): Promise<void> {
+  if (isQuotaExhausted()) return;
   try {
     const snap = await getDocs(collection(db, 'banners'));
     if (snap.empty) {
@@ -534,7 +535,7 @@ export async function seedBannersIfEmpty(): Promise<void> {
       }
     }
   } catch (error) {
-    console.warn("Could not seed banners:", error);
+    recordQuotaExceeded(error);
   }
 }
 
@@ -546,6 +547,8 @@ export function subscribeToProducts(
   if (localProds.length > 0) {
     onUpdate(localProds);
   }
+
+  if (isQuotaExhausted()) return () => {};
 
   const path = 'products';
   try {
@@ -571,17 +574,26 @@ export function subscribeToProducts(
         onUpdate(items);
       },
       (error) => {
-        console.warn("Firestore products snapshot note:", error);
+        recordQuotaExceeded(error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (!errMsg.toLowerCase().includes('quota') && !errMsg.toLowerCase().includes('resource-exhausted')) {
+          console.warn("Firestore products snapshot note:", error);
+        }
         if (onError) onError(error);
       }
     );
   } catch (err) {
-    console.warn("Firestore products subscribe error:", err);
+    recordQuotaExceeded(err);
     return () => {};
   }
 }
 
 export async function fetchProductsFromFirestore(): Promise<Product[]> {
+  const local = getStoredProducts().filter(p => !isDemoProduct(p));
+  if (isQuotaExhausted() || (isCacheFresh('products') && local.length > 0)) {
+    return local;
+  }
+
   const path = 'products';
   try {
     const snap = await getDocs(collection(db, path));
@@ -603,9 +615,13 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
     markCacheFresh('products');
     return items;
   } catch (error) {
-    console.warn("Firestore fetchProductsFromFirestore:", error);
+    recordQuotaExceeded(error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (!errMsg.toLowerCase().includes('quota') && !errMsg.toLowerCase().includes('resource-exhausted')) {
+      console.warn("Firestore fetchProductsFromFirestore:", error);
+    }
   }
-  return getStoredProducts().filter(p => !isDemoProduct(p));
+  return local;
 }
 
 export async function saveProductToFirestore(product: Product): Promise<void> {

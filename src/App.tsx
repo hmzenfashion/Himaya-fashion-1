@@ -14,7 +14,6 @@ import { AuthModal } from './components/AuthModal';
 import { InstallAppModal } from './components/InstallAppModal';
 import { Footer } from './components/Footer';
 import { FloatingSocialButtons } from './components/FloatingSocialButtons';
-import { AdManager } from './components/AdManager';
 import { PopularProductsSection } from './components/PopularProductsSection';
 import { Sparkles, SlidersHorizontal, Heart, X, Database } from 'lucide-react';
 import { User } from 'firebase/auth';
@@ -995,11 +994,7 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
       />
 
-      {/* Website Ad Manager (Popunder & 160x300 Banner scripts) */}
-      <AdManager
-        config={adConfig}
-        isAdminOpen={isAdminOpen}
-      />
+      {/* Ads & Links (বিজ্ঞাপন) completely removed from website so customers are never disturbed */}
 
       {/* Footer */}
       <Footer onOpenTracking={() => setIsTrackingOpen(true)} />
