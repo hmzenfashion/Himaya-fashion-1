@@ -679,7 +679,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     appDownloadNotes: storeSettings?.appDownloadNotes || 'Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.',
     appButtonText: storeSettings?.appButtonText || 'Download apps',
     isAppDownloadEnabled: storeSettings?.isAppDownloadEnabled ?? true,
-    telegramBotToken: storeSettings?.telegramBotToken || '8964946844:AAGtnJBIcNqoUXAfin_OXI9wglopYGfDsUA',
+    telegramBotToken: (storeSettings?.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844')) ? storeSettings.telegramBotToken : '9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI',
     telegramChatId: storeSettings?.telegramChatId || '6333005937',
     isTelegramNotificationsEnabled: storeSettings?.isTelegramNotificationsEnabled ?? true
   });
@@ -782,8 +782,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         appDownloadNotes: storeSettings.appDownloadNotes || prev.appDownloadNotes || '',
         appButtonText: storeSettings.appButtonText || prev.appButtonText || 'Download apps',
         isAppDownloadEnabled: storeSettings.isAppDownloadEnabled ?? prev.isAppDownloadEnabled ?? true,
-        telegramBotToken: storeSettings.telegramBotToken !== undefined ? storeSettings.telegramBotToken : (prev.telegramBotToken || ''),
-        telegramChatId: storeSettings.telegramChatId !== undefined ? storeSettings.telegramChatId : (prev.telegramChatId || ''),
+        telegramBotToken: (storeSettings.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844')) ? storeSettings.telegramBotToken : (prev.telegramBotToken && !prev.telegramBotToken.startsWith('8964946844') ? prev.telegramBotToken : '9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI'),
+        telegramChatId: storeSettings.telegramChatId || prev.telegramChatId || '6333005937',
         isTelegramNotificationsEnabled: storeSettings.isTelegramNotificationsEnabled !== undefined ? storeSettings.isTelegramNotificationsEnabled : (prev.isTelegramNotificationsEnabled ?? true)
       }));
     }

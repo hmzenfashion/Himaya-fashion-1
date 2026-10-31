@@ -1,0 +1,40 @@
+{
+  "bkashNumber": "01607412873",
+  "bkashType": "Personal",
+  "nagadNumber": "01607412873",
+  "nagadType": "Personal",
+  "rocketNumber": "",
+  "paymentInstructions": "বিকাশ বা নগদ অ্যাপ থেকে 'Send Money' অথবা 'Payment' করে আপনার নম্বর ও TrxID লিখুন।",
+  "contactPhone": "+8801832350726",
+  "promoNotice": "✨ Spring Luxury 2026 Collection — Enjoy Express Delivery across Bangladesh",
+  "isPromoActive": true,
+  "deliveryChargeInsideDhaka": 100,
+  "deliveryChargeOutsideDhaka": 150,
+  "appApkUrl": "/uploads/himaya-fashion.apk",
+  "appApkSize": "16.8 MB",
+  "isAppDownloadEnabled": true,
+  "contactEmail": "himayafashion136@gmail.com",
+  "whatsappNumber": "+8801832350726",
+  "facebookUrl": "https://facebook.com/himayafashion",
+  "announcementText": "✨ Summer Bespoke Collection · Complimentary Shipping on Orders over ৳5000",
+  "isAnnouncementActive": true,
+  "appApkVersion": "v1.2.0",
+  "appDownloadNotes": "Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.",
+  "appButtonText": "Download apps",
+  "customCategories": [
+    "Outerwear",
+    "Knitwear",
+    "Skirts",
+    "Accessories",
+    "Georgette 3 piece",
+    "readymade 3 pic",
+    "ইন্ডিয়ান শাড়ী"
+  ],
+  "deletedCategories": [
+    "Traditional",
+    "Dresses"
+  ],
+  "telegramBotToken": "9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI",
+  "telegramChatId": "6333005937",
+  "isTelegramNotificationsEnabled": true
+}

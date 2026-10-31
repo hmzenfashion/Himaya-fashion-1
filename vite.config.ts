@@ -11,6 +11,13 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    envPrefix: ['VITE_', 'TELEGRAM_', 'HTTP_', 'BOT_', 'SMS_', 'CHAT_'],
+    define: {
+      'process.env.TELEGRAM_BOT_TOKEN': JSON.stringify(process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_HTTP_API || process.env.HTTP_API_KEY || process.env.BOT_TOKEN || ''),
+      'process.env.TELEGRAM_CHAT_ID': JSON.stringify(process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_CHAT_ID || process.env.TELEGRAM_SMS_ID || process.env.SMS_ID || process.env.CHAT_ID || process.env.TELEGRAM_MESSAGE_ID || ''),
+      'process.env.TELEGRAM_HTTP_API': JSON.stringify(process.env.TELEGRAM_HTTP_API || process.env.VITE_TELEGRAM_HTTP_API || process.env.HTTP_API_KEY || ''),
+      'process.env.TELEGRAM_SMS_ID': JSON.stringify(process.env.TELEGRAM_SMS_ID || process.env.VITE_TELEGRAM_SMS_ID || process.env.SMS_ID || ''),
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

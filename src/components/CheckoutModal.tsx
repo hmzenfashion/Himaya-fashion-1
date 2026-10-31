@@ -492,7 +492,7 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
 
       // 2. Dispatch photo and order notification to Telegram Bot immediately
       // Works in all environments including static hosting like Netlify
-      sendTelegramOrderNotificationClient(orderData, storeSettings).catch(tErr => {
+      await sendTelegramOrderNotificationClient(orderData, storeSettings).catch(tErr => {
         console.warn("Client Telegram dispatch notice:", tErr);
       });
 
@@ -537,7 +537,7 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
     } catch (err) {
       console.error("Order submission failed, using client order", err);
       // Guarantee Telegram notification with photo even if server call errored
-      sendTelegramOrderNotificationClient(orderData, storeSettings).catch(() => {});
+      await sendTelegramOrderNotificationClient(orderData, storeSettings).catch(() => {});
 
       setCompletedOrder(orderData);
       onOrderSuccess(orderData);

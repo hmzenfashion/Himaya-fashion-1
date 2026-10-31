@@ -210,7 +210,10 @@ export default function App() {
             .catch(() => null),
           fetch('/api/banners').catch(() => null),
           fetch('/api/orders').catch(() => null),
-          fetch('/api/settings').catch(() => null),
+          fetch('/api/settings')
+            .then(res => res.ok ? res : fetch('/settings.json'))
+            .catch(() => fetch('/settings.json'))
+            .catch(() => null),
           fetch('/api/ads').catch(() => null)
         ]);
 
