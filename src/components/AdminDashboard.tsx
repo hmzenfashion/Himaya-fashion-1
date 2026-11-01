@@ -2111,6 +2111,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         body: JSON.stringify(localSettings)
       }).catch(() => {});
 
+      if (localSettings.telegramBotToken) {
+        try {
+          localStorage.setItem('himaya_telegram_bot_token', localSettings.telegramBotToken.trim());
+        } catch {}
+      }
+      if (localSettings.telegramChatId) {
+        try {
+          localStorage.setItem('himaya_telegram_chat_id', localSettings.telegramChatId.trim());
+        } catch {}
+      }
+
       if (onUpdateStoreSettings) {
         onUpdateStoreSettings(localSettings);
       }

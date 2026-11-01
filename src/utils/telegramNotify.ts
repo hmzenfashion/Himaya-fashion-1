@@ -118,10 +118,13 @@ export function getTelegramCredentials(settings?: StoreSettings | null): {
     chosenChatId = DEFAULT_CHAT_ID;
   }
 
+  // Active by default if credentials exist
+  const enabled = Boolean(botToken && chosenChatId && settings?.isTelegramNotificationsEnabled !== false);
+
   return {
     botToken,
     chatId: chosenChatId,
-    enabled: settings?.isTelegramNotificationsEnabled !== false
+    enabled
   };
 }
 
@@ -337,7 +340,19 @@ export async function sendTelegramOrderNotificationClient(
           })
         });
         const retryData = await retryRes.json().catch(() => null);
-        return Boolean(retryRes.ok && retryData?.ok);
+        if (retryRes.ok && retryData?.ok) return true;
+
+        // If reply_markup had an invalid button or link, send pure plain text without buttons
+        const pureRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: plainText
+          })
+        });
+        const pureData = await pureRes.json().catch(() => null);
+        return Boolean(pureRes.ok && pureData?.ok);
       } catch (err) {
         console.warn("[Telegram] sendSafeMessage error:", err);
         return false;

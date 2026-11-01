@@ -10,8 +10,8 @@
   "isPromoActive": true,
   "deliveryChargeInsideDhaka": 100,
   "deliveryChargeOutsideDhaka": 150,
-  "appApkUrl": "/uploads/himaya-fashion.apk",
-  "appApkSize": "16.8 MB",
+  "appApkUrl": "/uploads/test_json_1790148086722.apk",
+  "appApkSize": "0.0 MB",
   "isAppDownloadEnabled": true,
   "contactEmail": "himayafashion136@gmail.com",
   "whatsappNumber": "+8801832350726",
@@ -21,6 +21,7 @@
   "appApkVersion": "v1.2.0",
   "appDownloadNotes": "Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.",
   "appButtonText": "Download apps",
+  "updatedAt": "2026-09-22T12:01:26.372Z",
   "customCategories": [
     "Outerwear",
     "Knitwear",

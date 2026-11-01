@@ -750,7 +750,70 @@
       ]
     }
   ],
-  "orders": [],
+  "orders": [
+    {
+      "id": "ORD-LIVE-TEST-2",
+      "customerName": "হিমেল (সরাসরি টেস্ট)",
+      "email": "",
+      "phone": "01832350726",
+      "division": "",
+      "district": "ঢাকা",
+      "thana": "মিরপুর",
+      "address": "মিরপুর ১০, ঢাকা",
+      "city": "ঢাকা",
+      "deliveryArea": "Inside Dhaka",
+      "deliveryCharge": 100,
+      "items": [
+        {
+          "id": "item-test-2",
+          "title": "এক্সক্লুসিভ কাতান প্রিমিয়াম শাড়ী",
+          "price": 2800,
+          "quantity": 1,
+          "size": "Free Size",
+          "color": "মেরুন"
+        }
+      ],
+      "totalAmount": 2900,
+      "status": "Pending",
+      "createdAt": "2026-11-01T20:24:00.000Z",
+      "paymentMethod": "bkash",
+      "paymentSenderPhone": "01832350726",
+      "paymentTrxId": "TRX998877",
+      "customerId": "",
+      "isFirstOrder": false
+    },
+    {
+      "id": "ORD-LIVE-TEST-1",
+      "customerName": "হিমেল (লাইভ টেস্ট)",
+      "email": "",
+      "phone": "01832350726",
+      "division": "",
+      "district": "ঢাকা",
+      "thana": "মিরপুর",
+      "address": "মিরপুর ১০, ঢাকা",
+      "city": "ঢাকা",
+      "deliveryArea": "Inside Dhaka",
+      "deliveryCharge": 100,
+      "items": [
+        {
+          "id": "item-1",
+          "title": "কাতান প্রিমিয়াম শাড়ী",
+          "price": 2500,
+          "quantity": 1,
+          "size": "Free Size",
+          "color": "লাল"
+        }
+      ],
+      "totalAmount": 2600,
+      "status": "Pending",
+      "createdAt": "2026-11-01T20:22:00.000Z",
+      "paymentMethod": "cash",
+      "paymentSenderPhone": "",
+      "paymentTrxId": "",
+      "customerId": "",
+      "isFirstOrder": false
+    }
+  ],
   "adConfig": {
     "globalAdsEnabled": false,
     "popunderCooldownMinutes": 1,

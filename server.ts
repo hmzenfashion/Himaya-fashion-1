@@ -650,10 +650,11 @@ function escapeTelegramHtml(unsafe?: string): string {
 async function sendTelegramOrderNotification(order: Order, customSettings?: StoreSettings) {
   try {
     const data = getStoreData();
+    const settings = customSettings || data.settings || defaultSettings;
     const fallbackToken = Buffer.from("OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==", "base64").toString("utf-8");
-    const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || fallbackToken;
+    const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || process.env.telegrambot_token || fallbackToken;
     const botToken = (rawToken || "").replace(/\s+/g, '').trim();
-    const chatId = (settings.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
+    const chatId = (settings.telegramChatId || process.env.TELEGRAM_CHAT_ID || process.env.SMS_ID || process.env.telegramchat_id || "6333005937").trim();
 
     if (!botToken || !chatId) {
       console.log("ℹ️ Telegram bot token or chat ID is not set yet. Skipping Telegram alert.");
@@ -1050,9 +1051,9 @@ app.post("/api/telegram/test", async (req, res) => {
     const { botToken, chatId } = req.body;
     const data = getStoreData();
     const fallbackToken = Buffer.from("OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==", "base64").toString("utf-8");
-    const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || fallbackToken;
+    const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || process.env.telegrambot_token || fallbackToken;
     const token = (rawToken || "").replace(/\s+/g, '').trim();
-    const chat = (chatId || data.settings?.telegramChatId || process.env.TELEGRAM_CHAT_ID || "6333005937").trim();
+    const chat = (chatId || data.settings?.telegramChatId || process.env.TELEGRAM_CHAT_ID || process.env.SMS_ID || process.env.telegramchat_id || "6333005937").trim();
 
     if (!token || !chat) {
       return res.status(400).json({
