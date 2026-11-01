@@ -131,8 +131,6 @@ export interface StoreSettings {
   isAppDownloadEnabled?: boolean;
   coupons?: CouponItem[];
   // Telegram Bot Order Notifications
-  telegramBotToken?: string;
-  telegramChatId?: string;
   isTelegramNotificationsEnabled?: boolean;
   // Popular Collection Section Customization
   popularSectionBadge?: string;

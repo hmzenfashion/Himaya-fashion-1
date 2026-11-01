@@ -490,8 +490,7 @@ ${discountText}🚚 *ডেলিভারি চার্জ:* ৳${(order.deli
         console.warn("Firestore order direct save warning:", err);
       });
 
-      // 2. Dispatch photo and order notification to Telegram Bot immediately
-      // Works in all environments including static hosting like Netlify
+      // 2. Ask the server to send the order notification.
       await sendTelegramOrderNotificationClient(orderData, storeSettings).catch(tErr => {
         console.warn("Client Telegram dispatch notice:", tErr);
       });
