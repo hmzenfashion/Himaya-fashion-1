@@ -1468,13 +1468,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (togglingPopularId === prod.id) return;
     setTogglingPopularId(prod.id);
 
-    const isCurrentlyPopular = Boolean(prod.isPopular || prod.isPinned);
+    const isCurrentlyPopular = Boolean(
+      prod.isPopular === true || 
+      (prod as any).isPopular === 'true' || 
+      prod.isPinned === true || 
+      (prod as any).isPinned === 'true'
+    );
     const newPopularState = !isCurrentlyPopular;
 
     const updatedProduct: Product = {
       ...prod,
       isPopular: newPopularState,
-      isPinned: newPopularState
+      isPinned: newPopularState,
+      badge: (!newPopularState && prod.badge && /popular|পপুলার/i.test(prod.badge)) ? '' : prod.badge
     };
 
     // 1. Optimistic update for local Admin list

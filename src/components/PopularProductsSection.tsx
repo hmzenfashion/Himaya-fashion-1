@@ -28,22 +28,18 @@ export const PopularProductsSection: React.FC<PopularProductsSectionProps> = ({
   const realProducts = products.filter(p => p && p.title);
   if (realProducts.length === 0) return null;
 
-  // 1. Gather all admin-selected popular products (isPopular, isPinned, or badge containing 'popular')
-  const adminPopular = realProducts.filter(
+  // 1. Gather ONLY products explicitly marked as popular by admin
+  const popularProducts = realProducts.filter(
     p => Boolean(
       p.isPopular === true || 
       (p as any).isPopular === 'true' || 
       p.isPinned === true || 
-      (p as any).isPinned === 'true' || 
-      (p.badge && /popular|পপুলার/i.test(p.badge))
+      (p as any).isPinned === 'true'
     )
   );
 
-  // 2. User request: "এডমিন যতগুলো ক্লেইম সেকশনে ক্লিক করবে, সবগুলাই যেন পপুলার লিস্টে থাকে।"
-  // Display ALL products selected by admin as popular! If none selected yet, show top 5 items.
-  const popularProducts = adminPopular.length > 0 
-    ? adminPopular 
-    : realProducts.slice(0, 5);
+  // If no products are selected as popular, do not render the section
+  if (popularProducts.length === 0) return null;
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [animatingHeartId, setAnimatingHeartId] = useState<string | null>(null);
