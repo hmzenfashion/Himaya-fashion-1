@@ -134,6 +134,11 @@ export interface StoreSettings {
   telegramBotToken?: string;
   telegramChatId?: string;
   isTelegramNotificationsEnabled?: boolean;
+  // Popular Collection Section Customization
+  popularSectionBadge?: string;
+  popularSectionTitle?: string;
+  popularSectionSubtitle?: string;
+  isPopularSectionActive?: boolean;
 }
 
 export type AdType = 'popunder' | 'script_banner' | 'direct_link' | 'custom_html';

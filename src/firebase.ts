@@ -149,14 +149,27 @@ export function isQuotaExhausted(): boolean {
 
 let hasLoggedQuotaNotice = false;
 
+export function getErrorMessage(err: unknown): string {
+  if (!err) return '';
+  if (typeof err === 'string') return err.toLowerCase();
+  if (typeof err === 'object' && err !== null) {
+    const e = err as any;
+    return `${e.message || ''} ${e.code || ''} ${e.name || ''} ${String(err)}`.toLowerCase();
+  }
+  return String(err).toLowerCase();
+}
+
+export function isQuotaError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = getErrorMessage(err);
+  return msg.includes('quota') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('limit exceeded');
+}
+
 export function recordQuotaExceeded(err?: unknown): void {
-  const errMsg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
-  const isQuota = errMsg.includes('quota') || 
-                  errMsg.includes('resource-exhausted') || 
-                  errMsg.includes('resource_exhausted') ||
-                  errMsg.includes('limit exceeded');
-  
-  if (isQuota || !err) {
+  if (!err || isQuotaError(err)) {
     isQuotaExceededMemory = true;
     quotaExceededTime = Date.now();
     try {
@@ -575,8 +588,7 @@ export function subscribeToProducts(
       },
       (error) => {
         recordQuotaExceeded(error);
-        const errMsg = error instanceof Error ? error.message : String(error);
-        if (!errMsg.toLowerCase().includes('quota') && !errMsg.toLowerCase().includes('resource-exhausted')) {
+        if (!isQuotaError(error)) {
           console.warn("Firestore products snapshot note:", error);
         }
         if (onError) onError(error);
@@ -616,8 +628,7 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
     return items;
   } catch (error) {
     recordQuotaExceeded(error);
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (!errMsg.toLowerCase().includes('quota') && !errMsg.toLowerCase().includes('resource-exhausted')) {
+    if (!isQuotaError(error)) {
       console.warn("Firestore fetchProductsFromFirestore:", error);
     }
   }

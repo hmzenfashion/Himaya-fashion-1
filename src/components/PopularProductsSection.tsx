@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Product } from '../types';
+import { Product, StoreSettings } from '../types';
 import { Flame, Eye, ShoppingBag, Heart, Sparkles, Zap, ArrowRight, Share2, Check } from 'lucide-react';
 
 interface PopularProductsSectionProps {
   products: Product[];
+  settings?: StoreSettings;
   onSelectProduct: (product: Product) => void;
   onAddToCart: (product: Product, size: string, color: string) => void;
   onDirectCheckout?: (product: Product, size: string, color: string) => void;
@@ -13,12 +14,14 @@ interface PopularProductsSectionProps {
 
 export const PopularProductsSection: React.FC<PopularProductsSectionProps> = ({
   products,
+  settings,
   onSelectProduct,
   onAddToCart,
   onDirectCheckout,
   wishlist,
   onToggleWishlist,
 }) => {
+  if (settings?.isPopularSectionActive === false) return null;
   if (!products || products.length === 0) return null;
 
   // Filter out invalid products
@@ -90,18 +93,18 @@ export const PopularProductsSection: React.FC<PopularProductsSectionProps> = ({
                 {/* Highlight Badge */}
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border border-amber-500/40 text-amber-900 text-xs font-black uppercase tracking-wider shadow-2xs">
                   <Flame className="w-3.5 h-3.5 text-amber-600 fill-amber-500 animate-pulse" />
-                  <span>পপুলার কালেকশন &middot; POPULAR PICKS</span>
+                  <span>{settings?.popularSectionBadge?.trim() || 'পপুলার কালেকশন · POPULAR PICKS'}</span>
                 </div>
 
                 <h2 className="font-serif text-2xl sm:text-3xl md:text-4xl font-extrabold text-[#1A1A1A] tracking-tight flex items-center gap-2.5 flex-wrap">
-                  <span>জনপ্রিয় ও ট্রেন্ডিং কালেকশন</span>
+                  <span>{settings?.popularSectionTitle?.trim() || 'জনপ্রিয় ও ট্রেন্ডিং কালেকশন'}</span>
                   <span className="text-[#C5A059] font-sans text-base sm:text-lg font-bold bg-amber-50 px-2.5 py-0.5 rounded-lg border border-amber-200">
                     ★ {popularProducts.length}টি পণ্য
                   </span>
                 </h2>
 
                 <p className="text-xs sm:text-sm text-slate-600 max-w-2xl">
-                  গ্রাহকদের সর্বাধিক পছন্দের কালেকশন — অ্যাডমিন অনুমোদিত ও সরাসরি অর্ডারযোগ্য
+                  {settings?.popularSectionSubtitle?.trim() || 'গ্রাহকদের সর্বাধিক পছন্দের কালেকশন — অ্যাডমিন অনুমোদিত ও সরাসরি অর্ডারযোগ্য'}
                 </p>
               </div>
 

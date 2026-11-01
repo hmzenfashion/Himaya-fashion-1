@@ -68,6 +68,7 @@ import {
   updateBannerInFirestore,
   deleteBannerFromFirestore,
   saveStoreSettings,
+  saveStoredProducts,
   saveAdConfig,
   saveCouponToFirestore,
   deleteCouponFromFirestore,
@@ -533,7 +534,6 @@ type AdminTab =
   | 'payment_settings' 
   | 'stock_alerts' 
   | 'coupons' 
-  | 'ads_promos' 
   | 'reviews' 
   | 'settings'
   | 'app_install'
@@ -681,8 +681,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     isAppDownloadEnabled: storeSettings?.isAppDownloadEnabled ?? true,
     telegramBotToken: (storeSettings?.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844')) ? storeSettings.telegramBotToken : '9051474160:AAEC6TImfbG8vjZUbYePEuKRWIAb6IyVahI',
     telegramChatId: storeSettings?.telegramChatId || '6333005937',
-    isTelegramNotificationsEnabled: storeSettings?.isTelegramNotificationsEnabled ?? true
+    isTelegramNotificationsEnabled: storeSettings?.isTelegramNotificationsEnabled ?? true,
+    popularSectionBadge: storeSettings?.popularSectionBadge || 'পপুলার কালেকশন · POPULAR PICKS',
+    popularSectionTitle: storeSettings?.popularSectionTitle || 'জনপ্রিয় ও ট্রেন্ডিং কালেকশন',
+    popularSectionSubtitle: storeSettings?.popularSectionSubtitle || 'গ্রাহকদের সর্বাধিক পছন্দের কালেকশন — অ্যাডমিন অনুমোদিত ও সরাসরি অর্ডারযোগ্য',
+    isPopularSectionActive: storeSettings?.isPopularSectionActive ?? true
   });
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [togglingPopularId, setTogglingPopularId] = useState<string | null>(null);
+  const [popularSavedAlert, setPopularSavedAlert] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isTestingTelegram, setIsTestingTelegram] = useState(false);
   const [telegramTestResult, setTelegramTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -1352,91 +1359,115 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    const allImages = productForm.images && productForm.images.length > 0 
-      ? productForm.images 
-      : (productForm.image ? [productForm.image] : []);
-    const mainImg = productForm.image || allImages[0] || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=800';
-
-    const payload = {
-      ...productForm,
-      image: mainImg,
-      images: allImages,
-      price: Number(productForm.price),
-      originalPrice: productForm.originalPrice ? Number(productForm.originalPrice) : undefined,
-      stock: Number(productForm.stock),
-      sizes: productForm.sizes.split(',').map(s => s.trim()).filter(Boolean),
-      colors: productForm.colors.split(',').map(c => c.trim()).filter(Boolean)
-    };
-
-    const targetId = editingProduct ? editingProduct.id : ("prod-" + Date.now());
-    const createdAt = editingProduct?.createdAt || new Date().toISOString();
-    const isPopularVal = Boolean(productForm.isPopular || productForm.isPinned);
-    const fullProduct: Product = {
-      id: targetId,
-      ...payload,
-      isPinned: isPopularVal,
-      isPopular: isPopularVal,
-      createdAt
-    };
+    if (isSavingProduct) return;
+    setIsSavingProduct(true);
+    const saveStart = Date.now();
 
     try {
-      // Direct Firestore write
-      await saveProductToFirestore(fullProduct);
-    } catch (e) {
-      console.warn("Firestore product save:", e);
-    }
+      const allImages = productForm.images && productForm.images.length > 0 
+        ? productForm.images 
+        : (productForm.image ? [productForm.image] : []);
+      const mainImg = productForm.image || allImages[0] || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=800';
 
-    let nextList: Product[];
-    if (editingProduct) {
-      await fetch(`/api/products/${editingProduct.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullProduct)
-      }).catch(() => {});
-      nextList = localProducts.map(p => p.id === fullProduct.id ? fullProduct : p);
+      const payload = {
+        ...productForm,
+        image: mainImg,
+        images: allImages,
+        price: Number(productForm.price),
+        originalPrice: productForm.originalPrice ? Number(productForm.originalPrice) : undefined,
+        stock: Number(productForm.stock),
+        sizes: productForm.sizes.split(',').map(s => s.trim()).filter(Boolean),
+        colors: productForm.colors.split(',').map(c => c.trim()).filter(Boolean)
+      };
+
+      const targetId = editingProduct ? editingProduct.id : ("prod-" + Date.now());
+      const createdAt = editingProduct?.createdAt || new Date().toISOString();
+      const isPopularVal = Boolean(productForm.isPopular || productForm.isPinned);
+      const fullProduct: Product = {
+        id: targetId,
+        ...payload,
+        isPinned: isPopularVal,
+        isPopular: isPopularVal,
+        createdAt
+      };
+
+      // 1. Direct Firestore write
+      try {
+        await saveProductToFirestore(fullProduct);
+      } catch (e) {
+        console.warn("Firestore product save:", e);
+      }
+
+      // 2. Direct Server API write
+      let nextList: Product[];
+      if (editingProduct) {
+        await fetch(`/api/products/${editingProduct.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fullProduct)
+        }).catch(() => {});
+        nextList = localProducts.map(p => p.id === fullProduct.id ? fullProduct : p);
+      } else {
+        await fetch('/api/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fullProduct)
+        }).catch(() => {});
+        // Prepend newest product directly at top of list
+        nextList = [fullProduct, ...localProducts];
+      }
+
+      // 3. User request: product save button a click korle jeno 1s loading hoi
+      const elapsed = Date.now() - saveStart;
+      if (elapsed < 1000) {
+        await new Promise(res => setTimeout(res, 1000 - elapsed));
+      }
+
+      // 4. Instantly update local state and notify parent app
       setLocalProducts(nextList);
-    } else {
-      await fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullProduct)
-      }).catch(() => {});
-      // Prepend newest product directly at top of list
-      nextList = [fullProduct, ...localProducts];
-      setLocalProducts(nextList);
-    }
+      if (onUpdateProducts) {
+        onUpdateProducts(nextList);
+      }
 
-    if (onUpdateProducts) {
-      onUpdateProducts(nextList);
-    }
-    try {
-      localStorage.setItem('himaya_products', JSON.stringify(nextList));
-      localStorage.setItem('himaya_products_cache', JSON.stringify(nextList));
-    } catch {}
+      // 5. Ensure all local caches and store keys are persistently updated
+      try {
+        saveStoredProducts(nextList);
+        localStorage.setItem('himaya_real_products', JSON.stringify(nextList));
+        localStorage.setItem('himaya_products', JSON.stringify(nextList));
+        localStorage.setItem('himaya_products_cache', JSON.stringify(nextList));
+      } catch {}
 
-    setEditingProduct(null);
-    setIsAddingProduct(false);
-    setProductForm({
-      title: '',
-      price: 1800,
-      originalPrice: 2400,
-      category: 'Dresses',
-      image: '',
-      images: [],
-      description: '',
-      badge: 'New',
-      sizes: 'S, M, L, XL',
-      colors: 'Black, Maroon, Navy',
-      stock: 12,
-      featured: true,
-      isPinned: false,
-      isPopular: false
-    });
-    setDiscountPercentInput('');
-    onRefreshData();
+      setToastMessage(editingProduct ? `"${fullProduct.title}" সফলভাবে আপডেট হয়েছে!` : `"${fullProduct.title}" সফলভাবে তালিকায় যোগ করা হয়েছে!`);
+      setEditingProduct(null);
+      setIsAddingProduct(false);
+      setProductForm({
+        title: '',
+        price: 1800,
+        originalPrice: 2400,
+        category: allCategories[0] || 'Three Piece',
+        image: '',
+        images: [],
+        description: '',
+        badge: 'New',
+        sizes: 'Free size',
+        colors: 'Standard',
+        stock: 10,
+        featured: false,
+        isPinned: false,
+        isPopular: false
+      });
+    } catch (err) {
+      console.error("Save product error:", err);
+      setToastMessage("পণ্য সেভ করার সময় সমস্যা হয়েছে, পুনরায় চেষ্টা করুন।");
+    } finally {
+      setIsSavingProduct(false);
+    }
   };
 
   const handleTogglePopular = async (prod: Product) => {
+    if (togglingPopularId === prod.id) return;
+    setTogglingPopularId(prod.id);
+
     const isCurrentlyPopular = Boolean(prod.isPopular || prod.isPinned);
     const newPopularState = !isCurrentlyPopular;
 
@@ -1455,8 +1486,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onUpdateProducts(updatedList);
     }
 
-    // 3. Immediately persist in local storage cache
+    // 3. Immediately persist in all local storage caches so any page or refresh sees the update
     try {
+      saveStoredProducts(updatedList);
       localStorage.setItem('himaya_products', JSON.stringify(updatedList));
       localStorage.setItem('himaya_products_cache', JSON.stringify(updatedList));
     } catch {}
@@ -1464,21 +1496,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     // 4. Save to Firestore
     try {
       await saveProductToFirestore(updatedProduct);
-      setToastMessage(newPopularState ? `🔥 "${prod.title}" পপুলার সেকশনে যুক্ত হয়েছে!` : `"${prod.title}" পপুলার তালিকা থেকে সরানো হয়েছে।`);
+      setToastMessage(newPopularState ? `💙 "${prod.title}" পপুলার সেকশনে যুক্ত হয়েছে!` : `"${prod.title}" পপুলার তালিকা থেকে সরানো হয়েছে।`);
     } catch (err) {
       console.warn("Firestore popular toggle note:", err);
     }
 
-    // 5. Server API sync
-    fetch(`/api/products/${prod.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedProduct)
-    }).catch(() => {});
-
-    // 6. Refresh parent data
-    if (onRefreshData) {
-      onRefreshData();
+    // 5. Server API sync with await so data/store.json is reliably written
+    try {
+      await fetch(`/api/products/${prod.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProduct)
+      });
+    } catch (err) {
+      console.warn("API product update note:", err);
+    } finally {
+      setTogglingPopularId(null);
     }
   };
 
@@ -2422,7 +2455,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     { id: 'payment_settings', label: 'bKash/Nagad (পেমেন্ট)', icon: CreditCard },
     { id: 'stock_alerts', label: 'Stock Alerts', icon: AlertTriangle, badge: lowStockProducts.length, alert: lowStockProducts.length > 0 },
     { id: 'coupons', label: 'Coupons', icon: Ticket, badge: coupons.length },
-    { id: 'ads_promos', label: 'Ads & Links (বিজ্ঞাপন)', icon: Megaphone, badge: (localAdConfig.ads || []).filter(a => a.enabled).length },
     { id: 'reviews', label: 'Reviews', icon: MessageSquare, badge: reviews.length },
     { id: 'telegram_bot', label: 'Telegram Bot (অর্ডার নোটিফিকেশন)', icon: Send, alert: !localSettings.telegramBotToken || !localSettings.telegramChatId },
     { id: 'settings', label: 'Website Settings', icon: Settings },
@@ -3445,7 +3477,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 onChange={e => setProductForm({ ...productForm, isPopular: e.target.checked, isPinned: e.target.checked })}
                                 className="sr-only peer"
                               />
-                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                             </label>
                           </div>
 
@@ -3463,10 +3495,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </button>
                             <button
                               type="submit"
-                              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                              disabled={isSavingProduct}
+                              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-75 disabled:cursor-wait"
                             >
-                              <Check className="w-4 h-4" />
-                              <span>{editingProduct ? 'Update Product (সংরক্ষণ করুন)' : 'Publish Product (প্রডাক্ট পাবলিশ করুন)'}</span>
+                              {isSavingProduct ? (
+                                <>
+                                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  <span>সেভ হচ্ছে... (Saving...)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4" />
+                                  <span>{editingProduct ? 'Update Product (সংরক্ষণ করুন)' : 'Publish Product (প্রডাক্ট পাবলিশ করুন)'}</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </form>
@@ -3503,73 +3545,81 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 };
                                 return getProductTimestamp(b) - getProductTimestamp(a);
                               })
-                              .map(p => (
-                                <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                                  <td className="p-3.5 flex items-center gap-3">
-                                    <div className="relative flex-shrink-0">
-                                      <img src={p.image} alt={p.title} className="w-11 h-14 object-cover rounded-lg bg-slate-100" />
-                                      {p.images && p.images.length > 1 && (
-                                        <span className="absolute -bottom-1 -right-1 bg-slate-900 text-white text-[9px] font-bold px-1 rounded-full">
-                                          +{p.images.length - 1}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div>
-                                      <div className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
-                                        <span>{p.title}</span>
-                                        {(p.isPopular || p.isPinned) && (
-                                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-gradient-to-r from-amber-500 to-amber-600 text-white inline-flex items-center gap-0.5 shadow-2xs">
-                                            <Flame className="w-2.5 h-2.5 fill-current" /> পপুলার
+                              .map(p => {
+                                const isItemPopular = Boolean(
+                                  p.isPopular === true || 
+                                  (p as any).isPopular === 'true' || 
+                                  p.isPinned === true || 
+                                  (p as any).isPinned === 'true'
+                                );
+                                return (
+                                  <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                                    <td className="p-3.5 flex items-center gap-3">
+                                      <div className="relative flex-shrink-0">
+                                        <img src={p.image} alt={p.title} className="w-11 h-14 object-cover rounded-lg bg-slate-100" />
+                                        {p.images && p.images.length > 1 && (
+                                          <span className="absolute -bottom-1 -right-1 bg-slate-900 text-white text-[9px] font-bold px-1 rounded-full">
+                                            +{p.images.length - 1}
                                           </span>
                                         )}
                                       </div>
-                                      <div className="text-[10px] text-slate-500 mt-0.5">ID: {p.id}</div>
-                                    </div>
-                                  </td>
-                                  <td className="p-3.5 text-slate-600 font-medium">{p.category}</td>
-                                  <td className="p-3.5">
-                                    <div className="font-extrabold text-slate-900 text-sm">৳{p.price.toLocaleString()}</div>
-                                    {p.originalPrice && p.originalPrice > p.price && (
-                                      <div className="flex items-center gap-1.5 mt-0.5">
-                                        <span className="text-[11px] text-slate-400 line-through">৳{p.originalPrice.toLocaleString()}</span>
-                                        <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.2 rounded">
-                                          -{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)}%
-                                        </span>
+                                      <div>
+                                        <div className="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                          <span>{p.title}</span>
+                                          {isItemPopular && (
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-blue-600 text-white inline-flex items-center gap-0.5 shadow-2xs">
+                                              <Flame className="w-2.5 h-2.5 fill-current" /> পপুলার
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[10px] text-slate-500 mt-0.5">ID: {p.id}</div>
                                       </div>
-                                    )}
-                                  </td>
-                                  <td className="p-3.5">
-                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                      p.stock <= 5 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
-                                    }`}>
-                                      {p.stock} in stock
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5">
-                                    <div className="flex flex-col gap-1 items-start">
-                                      {p.badge && (
-                                        <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase">
-                                          {p.badge}
-                                        </span>
+                                    </td>
+                                    <td className="p-3.5 text-slate-600 font-medium">{p.category}</td>
+                                    <td className="p-3.5">
+                                      <div className="font-extrabold text-slate-900 text-sm">৳{p.price.toLocaleString()}</div>
+                                      {p.originalPrice && p.originalPrice > p.price && (
+                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                          <span className="text-[11px] text-slate-400 line-through">৳{p.originalPrice.toLocaleString()}</span>
+                                          <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.2 rounded">
+                                            -{Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)}%
+                                          </span>
+                                        </div>
                                       )}
-                                    </div>
-                                  </td>
-                                  {/* Dedicated 1-Click Popular / Claim Toggle Button */}
-                                  <td className="p-3.5 text-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleTogglePopular(p)}
-                                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
-                                        p.isPopular || p.isPinned
-                                          ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white border-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-xs ring-2 ring-amber-400/40'
-                                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300'
-                                      }`}
-                                      title={p.isPopular || p.isPinned ? "পপুলার সেকশন থেকে সরান" : "পপুলার সেকশনে যুক্ত করুন"}
-                                    >
-                                      <Flame className={`w-3.5 h-3.5 shrink-0 ${p.isPopular || p.isPinned ? 'fill-white text-white' : 'text-amber-500'}`} />
-                                      <span>{p.isPopular || p.isPinned ? '🔥 পপুলার (Active)' : 'পপুলার করুন'}</span>
-                                    </button>
-                                  </td>
+                                    </td>
+                                    <td className="p-3.5">
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                        p.stock <= 5 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                                      }`}>
+                                        {p.stock} in stock
+                                      </span>
+                                    </td>
+                                    <td className="p-3.5">
+                                      <div className="flex flex-col gap-1 items-start">
+                                        {p.badge && (
+                                          <span className="bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded font-bold uppercase">
+                                            {p.badge}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    {/* Dedicated 1-Click Popular / Claim Toggle Button */}
+                                    <td className="p-3.5 text-center">
+                                      <button
+                                        type="button"
+                                        disabled={togglingPopularId === p.id}
+                                        onClick={() => handleTogglePopular(p)}
+                                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs select-none ${
+                                          isItemPopular
+                                            ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-sm ring-2 ring-blue-400/50'
+                                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300'
+                                        } ${togglingPopularId === p.id ? 'opacity-70 pointer-events-none' : ''}`}
+                                        title={isItemPopular ? "পপুলার সেকশন থেকে সরান (আনপপুলার করুন)" : "পপুলার সেকশনে যুক্ত করুন (পপুলার করুন)"}
+                                      >
+                                        <Flame className={`w-3.5 h-3.5 shrink-0 ${isItemPopular ? 'fill-white text-white' : 'text-slate-400'}`} />
+                                        <span>{isItemPopular ? '🔥 পপুলার (Active)' : 'পপুলার করুন'}</span>
+                                      </button>
+                                    </td>
                                   <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                                     <button
                                       type="button"
@@ -3621,7 +3671,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     </button>
                                   </td>
                                 </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -4747,513 +4798,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </div>
                 )}
 
-                {/* 7. ADS & MONETIZATION MANAGEMENT VIEW */}
-                {activeTab === 'ads_promos' && (
-                  <div className="space-y-6 max-w-5xl">
-                    {/* Header with Master Switch */}
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-5 rounded-2xl border border-slate-700 shadow-xl text-white">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
-                            <Megaphone className="w-5 h-5" />
-                          </span>
-                          <div>
-                            <h4 className="font-bold text-base sm:text-lg">বিজ্ঞাপন ও লিংক কন্ট্রোল (Ads & Monetization)</h4>
-                            <p className="text-xs text-slate-300">
-                              Adsterra পপআন্ডার, ডিরেক্ট স্মার্টলিংক ও ব্যানার কোড চালু/বন্ধ করুন অথবা নতুন লিংক বসান।
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Global Master Toggle */}
-                      <div className="flex items-center gap-3 bg-slate-950/70 px-4 py-2.5 rounded-xl border border-slate-700/80">
-                        <div className="text-right">
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5 justify-end">
-                            <span className={`w-2 h-2 rounded-full ${localAdConfig.globalAdsEnabled ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
-                            {localAdConfig.globalAdsEnabled ? 'সব বিজ্ঞাপন চালু' : 'সব বিজ্ঞাপন বন্ধ'}
-                          </div>
-                          <div className="text-[10px] text-slate-400">Master Ad Switch</div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleToggleGlobalAds}
-                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                            localAdConfig.globalAdsEnabled ? 'bg-emerald-500' : 'bg-slate-700'
-                          }`}
-                        >
-                          <span
-                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                              localAdConfig.globalAdsEnabled ? 'translate-x-5' : 'translate-x-0'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Stat Cards */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                        <div className="text-xs font-semibold text-slate-500">মোট বিজ্ঞাপন (Total)</div>
-                        <div className="text-2xl font-black text-slate-900 mt-1">{localAdConfig.ads.length}</div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">লিস্টে সেভ করা আছে</div>
-                      </div>
-                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                        <div className="text-xs font-semibold text-emerald-600">চালু আছে (Active)</div>
-                        <div className="text-2xl font-black text-emerald-600 mt-1">
-                          {localAdConfig.ads.filter(a => a.enabled).length}
-                        </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">ওয়েবসাইটে শো করছে</div>
-                      </div>
-                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                        <div className="text-xs font-semibold text-purple-600">পপআন্ডার (Popunder)</div>
-                        <div className="text-sm font-bold text-slate-800 mt-2 flex items-center gap-1.5">
-                          {localAdConfig.ads.some(a => a.type === 'popunder' && a.enabled) ? (
-                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-[11px] font-bold">সক্রিয় (Active)</span>
-                          ) : (
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[11px] font-bold">বন্ধ (Off)</span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-1 truncate">ক্লিকে নতুন ট্যাব ওপেন</div>
-                      </div>
-                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                        <div className="text-xs font-semibold text-amber-600">ব্যানার কোড (Banner)</div>
-                        <div className="text-sm font-bold text-slate-800 mt-2 flex items-center gap-1.5">
-                          {localAdConfig.ads.some(a => a.type === 'script_banner' && a.enabled) ? (
-                            <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[11px] font-bold">160x300 চালু</span>
-                          ) : (
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[11px] font-bold">বন্ধ (Off)</span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-1 truncate">সাইটের ভাসমান ব্যানার</div>
-                      </div>
-                    </div>
-
-                    {/* Toolbar & Controls */}
-                    <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={handleOpenAddAd}
-                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition-colors flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>নতুন বিজ্ঞাপন / লিংক বসান (+ Add Ad)</span>
-                        </button>
-
-                        <button
-                          onClick={handleResetToAdsterraDefaults}
-                          className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
-                          title="Adsterra এর দুটি মূল লিংক রিস্টোর করুন"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>Adsterra কোড রিস্টোর করুন</span>
-                        </button>
-                      </div>
-
-                      {/* Cooldown control */}
-                      <div className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-                        <Clock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>পপআন্ডার ব্যবধান:</span>
-                        <select
-                          value={popunderCooldownInput}
-                          onChange={(e) => {
-                            const val = Number(e.target.value) || 1;
-                            setPopunderCooldownInput(val);
-                            handleSaveCooldown(val);
-                          }}
-                          className="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
-                        >
-                          <option value="1">১ মিনিট পর পর (প্রস্তাবিত)</option>
-                          <option value="3">৩ মিনিট পর পর</option>
-                          <option value="5">৫ মিনিট পর পর</option>
-                          <option value="10">১০ মিনিট পর পর</option>
-                          <option value="0">প্রতি ক্লিকে (Always)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Add / Edit Form Modal/Panel */}
-                    {isAddingAd && (
-                      <div className="p-6 bg-slate-50 rounded-2xl border-2 border-emerald-500/50 shadow-md space-y-4 animate-fade-in">
-                        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                          <h5 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                            {editingAd ? 'বিজ্ঞাপন এডিট করুন (Edit Ad)' : 'নতুন বিজ্ঞাপন লিংক বা স্ক্রিপ্ট যুক্ত করুন (Add New Ad)'}
-                          </h5>
-                          <button
-                            onClick={() => {
-                              setIsAddingAd(false);
-                              setEditingAd(null);
-                            }}
-                            className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200 cursor-pointer"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-
-                        <form onSubmit={handleSaveAdForm} className="space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                বিজ্ঞাপনের নাম (Ad Name / Title) *
-                              </label>
-                              <input
-                                type="text"
-                                required
-                                value={adForm.name}
-                                onChange={(e) => setAdForm({ ...adForm, name: e.target.value })}
-                                placeholder="যেমন: Adsterra Popunder Link অথবা 160x300 Banner"
-                                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                বিজ্ঞাপনের ধরন (Ad Type) *
-                              </label>
-                              <select
-                                value={adForm.type}
-                                onChange={(e) => {
-                                  const newType = e.target.value as AdType;
-                                  setAdForm({
-                                    ...adForm,
-                                    type: newType,
-                                    placement: newType === 'popunder' ? 'popunder' : 'floating_corner'
-                                  });
-                                }}
-                                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
-                              >
-                                <option value="popunder">⚡ Popunder / Direct Smartlink (ইউজার ক্লিকে নতুন ট্যাব)</option>
-                                <option value="script_banner">🖼️ Script / Iframe Banner (Adsterra 160x300 ব্যানার কোড)</option>
-                                <option value="direct_link">🔗 Direct Sponsor Link (ওয়েবসাইটে স্পন্সর বাটন লিংক)</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Conditional Inputs based on Type */}
-                          {(adForm.type === 'popunder' || adForm.type === 'direct_link') && (
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                বিজ্ঞাপন লিংক (Ad URL / Target Link) *
-                              </label>
-                              <input
-                                type="url"
-                                required
-                                value={adForm.linkUrl}
-                                onChange={(e) => setAdForm({ ...adForm, linkUrl: e.target.value })}
-                                placeholder="https://www.profitableratecpmnetwork.com/..."
-                                className="w-full p-2.5 text-xs font-mono bg-white border border-slate-300 rounded-xl text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                              />
-                              <p className="text-[11px] text-slate-500 mt-1">
-                                ইউজার সাইটে যেকোনো জায়গায় ক্লিক করলে এই লিংকে রিডাইরেক্ট বা নতুন ট্যাবে ওপেন হবে।
-                              </p>
-                            </div>
-                          )}
-
-                          {(adForm.type === 'script_banner' || adForm.type === 'custom_html') && (
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
-                                স্ক্রিপ্ট বা আইফ্রেম কোড (Script / HTML Code) *
-                              </label>
-                              <textarea
-                                rows={5}
-                                required
-                                value={adForm.scriptCode}
-                                onChange={(e) => setAdForm({ ...adForm, scriptCode: e.target.value })}
-                                placeholder="<script>atOptions = { ... };</script><script src='https://www.highrevenueformat.com/.../invoke.js'></script>"
-                                className="w-full p-2.5 text-xs font-mono bg-slate-900 text-emerald-300 border border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                              />
-                              <p className="text-[11px] text-slate-500 mt-1">
-                                Adsterra, Google AdSense বা যেকোনো অ্যাড নেটওয়ার্কের স্ক্রিপ্ট কোড এখানে পেস্ট করুন। এটি সুরক্ষিত আইফ্রেমে লোড হবে।
-                              </p>
-                            </div>
-                          )}
-
-                          <div className="flex items-center justify-between pt-2">
-                            <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={adForm.enabled}
-                                onChange={(e) => setAdForm({ ...adForm, enabled: e.target.checked })}
-                                className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
-                              />
-                              <span className="text-slate-800">এখনই ওয়েবসাইটে চালু রাখুন (Active Now)</span>
-                            </label>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsAddingAd(false);
-                                  setEditingAd(null);
-                                }}
-                                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
-                              >
-                                বাতিল (Cancel)
-                              </button>
-                              <button
-                                type="submit"
-                                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow cursor-pointer flex items-center gap-1.5"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>{editingAd ? 'আপডেট করুন (Save Changes)' : 'সেভ ও পাবলিশ করুন (Add Ad)'}</span>
-                              </button>
-                            </div>
-                          </div>
-                        </form>
-                      </div>
-                    )}
-
-                    {/* Ads List Card Container */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h5 className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                          <span>বিজ্ঞাপনের তালিকা (Configured Ads)</span>
-                          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">
-                            {localAdConfig.ads.length} টি
-                          </span>
-                        </h5>
-                        <span className="text-xs text-slate-500">চালু বা বন্ধ করতে সুইচে ক্লিক করুন</span>
-                      </div>
-
-                      {localAdConfig.ads.length === 0 ? (
-                        <div className="p-8 text-center bg-white rounded-2xl border border-slate-200">
-                          <Megaphone className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                          <p className="text-xs text-slate-500 font-medium">কোনো বিজ্ঞাপন লিংক বা কোড সেট করা নেই।</p>
-                          <button
-                            onClick={handleResetToAdsterraDefaults}
-                            className="mt-3 px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl cursor-pointer"
-                          >
-                            Adsterra ডিফল্ট কোড যুক্ত করুন
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-3">
-                          {localAdConfig.ads.map((ad) => (
-                            <div
-                              key={ad.id}
-                              className={`p-4 rounded-2xl border transition-all ${
-                                ad.enabled
-                                  ? 'bg-white border-slate-200 shadow-xs hover:border-emerald-300'
-                                  : 'bg-slate-50/80 border-slate-200/60 opacity-75'
-                              }`}
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                {/* Left details */}
-                                <div className="space-y-1 flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <h6 className="font-bold text-slate-900 text-sm truncate">{ad.name}</h6>
-                                    
-                                    {/* Type Badges */}
-                                    {ad.type === 'popunder' && (
-                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-extrabold rounded-full">
-                                        ⚡ Popunder Direct Link
-                                      </span>
-                                    )}
-                                    {ad.type === 'script_banner' && (
-                                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-extrabold rounded-full">
-                                        🖼️ 160x300 Script Banner
-                                      </span>
-                                    )}
-                                    {ad.type === 'direct_link' && (
-                                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-extrabold rounded-full">
-                                        🔗 Direct Sponsor Link
-                                      </span>
-                                    )}
-
-                                    {/* Status Pill */}
-                                    <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
-                                      ad.enabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
-                                    }`}>
-                                      {ad.enabled ? '● চালু (ACTIVE)' : '○ বন্ধ (OFF)'}
-                                    </span>
-                                  </div>
-
-                                  {/* Link / Script preview */}
-                                  {ad.linkUrl && (
-                                    <div className="flex items-center gap-2 text-xs text-slate-600 truncate pt-0.5">
-                                      <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                      <span className="font-mono text-[11px] truncate text-slate-700">{ad.linkUrl}</span>
-                                      <a
-                                        href={ad.linkUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-emerald-600 hover:text-emerald-700 text-[11px] font-bold flex items-center gap-0.5 shrink-0"
-                                      >
-                                        টেস্ট করুন <ExternalLink className="w-3 h-3" />
-                                      </a>
-                                    </div>
-                                  )}
-
-                                  {ad.scriptCode && (
-                                    <div className="text-[11px] font-mono text-slate-500 bg-slate-100 p-2 rounded-lg line-clamp-1 truncate max-w-xl">
-                                      {ad.scriptCode}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Right Action Buttons */}
-                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                                  {/* Quick Toggle Button */}
-                                  <button
-                                    onClick={() => handleToggleAd(ad.id)}
-                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                      ad.enabled
-                                        ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm'
-                                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                                    }`}
-                                    title={ad.enabled ? "বিজ্ঞাপনটি বন্ধ করতে ক্লিক করুন" : "বিজ্ঞাপনটি চালু করতে ক্লিক করুন"}
-                                  >
-                                    {ad.enabled ? (
-                                      <>
-                                        <Check className="w-3.5 h-3.5" />
-                                        <span>চালু (ON)</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <X className="w-3.5 h-3.5" />
-                                        <span>বন্ধ (OFF)</span>
-                                      </>
-                                    )}
-                                  </button>
-
-                                  {/* Edit Button */}
-                                  <button
-                                    onClick={() => handleOpenEditAd(ad)}
-                                    className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
-                                    title="এডিট করুন"
-                                  >
-                                    <Edit className="w-4 h-4" />
-                                  </button>
-
-                                  {/* Delete Button */}
-                                  <button
-                                    onClick={() => handleDeleteAd(ad.id)}
-                                    className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
-                                    title="মুছে ফেলুন"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Live Preview Sandbox for Adsterra 160x300 Banner */}
-                    {localAdConfig.ads.some(a => a.type === 'script_banner' && a.enabled) && (
-                      <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                          <div>
-                            <h5 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
-                              <Sparkles className="w-4 h-4 text-amber-500" />
-                              <span>ব্যানার লাইভ প্রিভিউ (160x300 Live Sandbox Preview)</span>
-                            </h5>
-                            <p className="text-[11px] text-slate-500">ওয়েবসাইটের ডানদিকের নিচে এই ব্যানারটি লাইভ লোড হচ্ছে।</p>
-                          </div>
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">
-                            Sandboxed Iframe
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-center p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                          <div className="w-[160px] h-[300px] bg-white rounded-lg shadow-md overflow-hidden border border-slate-200">
-                            <iframe
-                              title="Admin Ad Preview"
-                              srcDoc={`<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=160, initial-scale=1.0" />
-    <style>
-      html, body {
-        margin: 0;
-        padding: 0;
-        width: 160px;
-        height: 300px;
-        background: #ffffff;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-      }
-    </style>
-  </head>
-  <body>
-    ${localAdConfig.ads.find(a => a.type === 'script_banner' && a.enabled)?.scriptCode || ''}
-  </body>
-</html>`}
-                              className="w-[160px] h-[300px] border-0"
-                              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Storefront Top Announcement Bar Section */}
-                    <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h5 className="font-bold text-slate-900 text-sm">ওয়েবসাইটের শীর্ষ ঘোষণা বার (Top Announcement Bar)</h5>
-                          <p className="text-xs text-slate-500">ওয়েবসাইটের একবারে শীর্ষে প্রমোশনাল অফার বা নোটিশ টেক্সট প্রদর্শন করুন।</p>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={isPromoActive} 
-                            onChange={(e) => setIsPromoActive(e.target.checked)}
-                            className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4" 
-                          />
-                          <span>ওয়েবসাইটে সক্রিয়</span>
-                        </label>
-                      </div>
-
-                      <textarea
-                        rows={2}
-                        value={promoMessage}
-                        onChange={(e) => setPromoMessage(e.target.value)}
-                        placeholder="যেমন: ✨ Special Eid Offer: Free Nationwide Express Shipping on Orders Over ৳2,000!"
-                        className="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900"
-                      />
-
-                      <div className="flex items-center justify-between">
-                        <button
-                          onClick={async () => {
-                            try {
-                              const updated = {
-                                ...localSettings,
-                                announcementText: promoMessage,
-                                isAnnouncementActive: isPromoActive
-                              };
-                              setLocalSettings(updated);
-                              if (onUpdateStoreSettings) {
-                                onUpdateStoreSettings(updated);
-                              }
-                              await saveStoreSettings(updated);
-                              setPromoSavedAlert(true);
-                              setTimeout(() => setPromoSavedAlert(false), 2500);
-                            } catch (err) {
-                              console.error('Error saving announcement:', err);
-                            }
-                          }}
-                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow flex items-center gap-1.5"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>ঘোষণা সেভ করুন (Save Announcement)</span>
-                        </button>
-                        {promoSavedAlert && (
-                          <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                            <Check className="w-4 h-4" /> সফলভাবে সেভ হয়েছে!
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* 8. REVIEWS VIEW */}
                 {activeTab === 'reviews' && (
                   <div className="space-y-6">
@@ -5410,7 +4954,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                         <button
                           type="button"
-                          onClick={() => setActiveTab('ads_promos')}
+                          onClick={() => document.getElementById('announcement-settings-card')?.scrollIntoView({ behavior: 'smooth' })}
                           className="p-3.5 bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
                         >
                           <div className="flex items-center gap-3">
@@ -5425,6 +4969,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </div>
                           </div>
                           <span className="text-xs font-bold text-teal-600 group-hover:translate-x-0.5 transition-transform">এডিট &rarr;</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => document.getElementById('popular-section-settings-card')?.scrollIntoView({ behavior: 'smooth' })}
+                          className="p-3.5 bg-slate-50 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-xl flex items-center justify-between text-left transition-all cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center font-bold">
+                              <Flame className="w-4 h-4 fill-white" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-slate-900 group-hover:text-amber-800">
+                                পপুলার কালেকশন এডিট
+                              </div>
+                              <div className="text-[10px] text-slate-500">শীর্ষে প্রদর্শিত পপুলার সেকশনের নাম ও টেক্সট</div>
+                            </div>
+                          </div>
+                          <span className="text-xs font-bold text-amber-700 group-hover:translate-x-0.5 transition-transform">এডিট &rarr;</span>
                         </button>
 
                         <button
@@ -5447,6 +5010,179 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </div>
                           <span className="text-xs font-bold text-amber-700 group-hover:translate-x-0.5 transition-transform">কনফিগার &rarr;</span>
                         </button>
+                      </div>
+                    </div>
+
+                                        {/* Storefront Top Announcement Bar Section */}
+                    <div id="announcement-settings-card" className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h5 className="font-bold text-slate-900 text-sm">ওয়েবসাইটের শীর্ষ ঘোষণা বার (Top Announcement Bar)</h5>
+                          <p className="text-xs text-slate-500">ওয়েবসাইটের একবারে শীর্ষে প্রমোশনাল অফার বা নোটিশ টেক্সট প্রদর্শন করুন।</p>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={isPromoActive} 
+                            onChange={(e) => setIsPromoActive(e.target.checked)}
+                            className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4" 
+                          />
+                          <span>ওয়েবসাইটে সক্রিয়</span>
+                        </label>
+                      </div>
+
+                      <textarea
+                        rows={2}
+                        value={promoMessage}
+                        onChange={(e) => setPromoMessage(e.target.value)}
+                        placeholder="যেমন: ✨ Special Eid Offer: Free Nationwide Express Shipping on Orders Over ৳2,000!"
+                        className="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900"
+                      />
+
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const updated = {
+                                ...localSettings,
+                                announcementText: promoMessage,
+                                isAnnouncementActive: isPromoActive
+                              };
+                              setLocalSettings(updated);
+                              if (onUpdateStoreSettings) {
+                                onUpdateStoreSettings(updated);
+                              }
+                              await saveStoreSettings(updated);
+                              setPromoSavedAlert(true);
+                              setTimeout(() => setPromoSavedAlert(false), 2500);
+                            } catch (err) {
+                              console.error('Error saving announcement:', err);
+                            }
+                          }}
+                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow flex items-center gap-1.5"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>ঘোষণা সেভ করুন (Save Announcement)</span>
+                        </button>
+                        {promoSavedAlert && (
+                          <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                            <Check className="w-4 h-4" /> সফলভাবে সেভ হয়েছে!
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Popular Collection (POPULAR PICKS) Section Editor Card */}
+                    <div id="popular-section-settings-card" className="p-6 bg-white rounded-2xl border-2 border-amber-500/30 shadow-xs space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-gradient-to-br from-amber-500 to-amber-600 text-white rounded-xl shadow-xs">
+                            <Flame className="w-5 h-5 fill-white" />
+                          </div>
+                          <div>
+                            <h5 className="font-bold text-slate-900 text-sm sm:text-base">পপুলার কালেকশন (POPULAR PICKS) কন্ট্রোল</h5>
+                            <p className="text-xs text-slate-500">ওয়েবসাইটের সর্বশীর্ষে প্রদর্শিত গোল্ডেন হাইলাইট পপুলার কালেকশন সেকশনের নাম ও টেক্সট নিজের মতো সাজান।</p>
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer shrink-0">
+                          <input 
+                            type="checkbox" 
+                            checked={localSettings.isPopularSectionActive ?? true} 
+                            onChange={(e) => setLocalSettings({ ...localSettings, isPopularSectionActive: e.target.checked })}
+                            className="rounded text-amber-600 focus:ring-amber-500 h-4 w-4 cursor-pointer" 
+                          />
+                          <span>ওয়েবসাইটে প্রদর্শন করুন</span>
+                        </label>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                        <div>
+                          <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">
+                            ব্যাজ টেক্সট (Small Badge Label)
+                          </label>
+                          <input
+                            type="text"
+                            value={localSettings.popularSectionBadge || ''}
+                            onChange={(e) => setLocalSettings({ ...localSettings, popularSectionBadge: e.target.value })}
+                            placeholder="যেমন: পপুলার কালেকশন · POPULAR PICKS"
+                            className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-900 font-bold"
+                          />
+                          <span className="text-[10px] text-slate-500 mt-0.5 block">ডিফল্ট: পপুলার কালেকশন · POPULAR PICKS</span>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">
+                            প্রধান শিরোনাম (Main Title)
+                          </label>
+                          <input
+                            type="text"
+                            value={localSettings.popularSectionTitle || ''}
+                            onChange={(e) => setLocalSettings({ ...localSettings, popularSectionTitle: e.target.value })}
+                            placeholder="যেমন: জনপ্রিয় ও ট্রেন্ডিং কালেকশন"
+                            className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-900 font-bold"
+                          />
+                          <span className="text-[10px] text-slate-500 mt-0.5 block">ডিফল্ট: জনপ্রিয় ও ট্রেন্ডিং কালেকশন</span>
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">
+                            সাব-টাইটেল / বিবরণ বার্তা (Subtitle / Tagline)
+                          </label>
+                          <input
+                            type="text"
+                            value={localSettings.popularSectionSubtitle || ''}
+                            onChange={(e) => setLocalSettings({ ...localSettings, popularSectionSubtitle: e.target.value })}
+                            placeholder="যেমন: গ্রাহকদের সর্বাধিক পছন্দের কালেকশন — অ্যাডমিন অনুমোদিত ও সরাসরি অর্ডারযোগ্য"
+                            className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-900"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('products')}
+                          className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1.5 cursor-pointer underline underline-offset-4"
+                        >
+                          <Flame className="w-3.5 h-3.5 text-amber-600" />
+                          <span>পণ্য তালিকায় গিয়ে যেকোনো পণ্যের 🔥 পপুলার বাটনে ক্লিক করে পণ্য নির্বাচন করুন &rarr;</span>
+                        </button>
+
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const updated = {
+                                  ...localSettings,
+                                  popularSectionBadge: localSettings.popularSectionBadge || 'পপুলার কালেকশন · POPULAR PICKS',
+                                  popularSectionTitle: localSettings.popularSectionTitle || 'জনপ্রিয় ও ট্রেন্ডিং কালেকশন',
+                                  popularSectionSubtitle: localSettings.popularSectionSubtitle || 'গ্রাহকদের সর্বাধিক পছন্দের কালেকশন — অ্যাডমিন অনুমোদিত ও সরাসরি অর্ডারযোগ্য',
+                                  isPopularSectionActive: localSettings.isPopularSectionActive ?? true
+                                };
+                                setLocalSettings(updated);
+                                if (onUpdateStoreSettings) {
+                                  onUpdateStoreSettings(updated);
+                                }
+                                await saveStoreSettings(updated);
+                                setPopularSavedAlert(true);
+                                setTimeout(() => setPopularSavedAlert(false), 2500);
+                              } catch (err) {
+                                console.error('Error saving popular settings:', err);
+                              }
+                            }}
+                            className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow flex items-center gap-1.5"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>পপুলার সেটিংস সেভ করুন (Save Popular Picks)</span>
+                          </button>
+                          {popularSavedAlert && (
+                            <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                              <Check className="w-4 h-4" /> সফলভাবে সেভ হয়েছে!
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 

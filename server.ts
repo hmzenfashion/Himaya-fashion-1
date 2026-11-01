@@ -233,7 +233,19 @@ function getStoreData(): StoreData {
 }
 
 function saveStoreData(data: StoreData) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+    if (data.products && Array.isArray(data.products)) {
+      const pubProductsPath = path.join(process.cwd(), 'public', 'products.json');
+      fs.writeFileSync(pubProductsPath, JSON.stringify(data.products, null, 2));
+    }
+    if (data.settings) {
+      const pubSettingsPath = path.join(process.cwd(), 'public', 'settings.json');
+      fs.writeFileSync(pubSettingsPath, JSON.stringify(data.settings, null, 2));
+    }
+  } catch (err) {
+    console.error('Error in saveStoreData:', err);
+  }
 }
 
 // API Routes

@@ -83,7 +83,10 @@ export const sanitizeProduct = (p: any): Product => {
     sizes: safeSizes,
     colors: safeColors,
     stock: typeof p?.stock === 'number' && !isNaN(p.stock) ? p.stock : 10,
-    featured: Boolean(p?.featured)
+    featured: Boolean(p?.featured),
+    isPinned: Boolean(p?.isPinned || p?.isPopular || (p?.isPinned === 'true') || (p?.isPopular === 'true')),
+    isPopular: Boolean(p?.isPopular || p?.isPinned || (p?.isPopular === 'true') || (p?.isPinned === 'true')),
+    createdAt: p?.createdAt ? String(p.createdAt) : undefined
   };
 };
 
@@ -189,12 +192,12 @@ export default function App() {
   const [isFirebaseSyncActive, setIsFirebaseSyncActive] = useState(false);
 
   const fetchData = async () => {
+    const fetchStartTime = Date.now();
     try {
       // 1. Instantly populate UI from local high-speed cache
       const cachedProds = getStoredProducts().filter(p => !isDemoProduct(p));
       if (cachedProds.length > 0) {
         setProducts(cachedProds.map(sanitizeProduct));
-        setLoading(false);
       }
       const cachedBans = getStoredBanners();
       if (cachedBans && cachedBans.length > 0) setBanners(cachedBans);
@@ -274,7 +277,13 @@ export default function App() {
     } catch (err) {
       // ignore
     } finally {
-      setLoading(false);
+      // User request: If products take time, provide ~1 second smooth loading state
+      const elapsed = Date.now() - fetchStartTime;
+      if (elapsed < 1000) {
+        setTimeout(() => setLoading(false), 1000 - elapsed);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -660,9 +669,10 @@ export default function App() {
         appButtonText={storeSettings?.appButtonText || "Download apps"}
       />
 
-      {/* TOP POPULAR PRODUCTS (5 ITEMS, HIGHLIGHTED WITH LUXURY GOLD BORDER ON TOP) */}
+      {/* TOP POPULAR PRODUCTS (HIGHLIGHTED WITH LUXURY GOLD BORDER ON TOP) */}
       <PopularProductsSection
         products={allRealProducts}
+        settings={storeSettings}
         onSelectProduct={handleSelectProduct}
         onAddToCart={(p, s, c) => handleAddToCart(p, s, c, 1)}
         onDirectCheckout={handleDirectCheckout}
