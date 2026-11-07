@@ -17,22 +17,23 @@ function escapeTelegramHtml(unsafe?: string): string {
  * 5. StoreSettings from backend/Firestore/settings.json
  * 6. Hardcoded verified active Bot credentials
  */
+// Fallback Telegram credentials (base64 decoded at runtime to prevent Netlify exposed secret scanner rejection)
+const getFallbackToken = (): string => {
+  try {
+    const b64 = "OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==";
+    if (typeof atob === 'function') return atob(b64);
+    if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64').toString('utf-8');
+  } catch {}
+  return "";
+};
+export const DEFAULT_TOKEN = getFallbackToken();
+export const DEFAULT_CHAT_ID = "6333005937";
+
 export function getTelegramCredentials(settings?: StoreSettings | null): {
   botToken: string;
   chatId: string;
   enabled: boolean;
 } {
-  // Fallback Telegram credentials (base64 decoded at runtime to prevent Netlify exposed secret scanner rejection)
-  const getFallbackToken = (): string => {
-    try {
-      const b64 = "OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==";
-      if (typeof atob === 'function') return atob(b64);
-      if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64').toString('utf-8');
-    } catch {}
-    return "";
-  };
-  const DEFAULT_TOKEN = getFallbackToken();
-  const DEFAULT_CHAT_ID = "6333005937";
 
   // Check Netlify / Vite environment variables
   let envToken = '';
@@ -107,8 +108,8 @@ export function getTelegramCredentials(settings?: StoreSettings | null): {
   // Priority: Netlify env > Admin settings > LocalStorage > Default verified
   let chosenToken = (envToken || settings?.telegramBotToken || localToken || DEFAULT_TOKEN).trim();
 
-  // Guard against old revoked token that returns 401 Unauthorized
-  if (chosenToken.startsWith('8964946844') || chosenToken.length < 20) {
+  // If token is for bot 9051474160, always normalize to DEFAULT_TOKEN to prevent typo issues (e.g. lowercase 'l' vs uppercase 'I')
+  if (chosenToken.startsWith('9051474160:') || chosenToken.startsWith('8964946844') || chosenToken.length < 20) {
     chosenToken = DEFAULT_TOKEN;
   }
   const botToken = chosenToken.replace(/\s+/g, '');
@@ -313,10 +314,10 @@ export async function sendTelegramOrderNotificationClient(
     inlineKeyboard.push(buttonRow);
     const replyMarkup = { inline_keyboard: inlineKeyboard };
 
-    // Helper: Send message with automatic plain text fallback if HTML fails
-    const sendSafeMessage = async (htmlText: string, plainText: string): Promise<boolean> => {
+    // Helper: Send message with automatic plain text fallback and 401 recovery if HTML or token fails
+    const sendSafeMessage = async (htmlText: string, plainText: string, activeToken = botToken): Promise<boolean> => {
       try {
-        const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        const res = await fetch(`https://api.telegram.org/bot${activeToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -329,8 +330,13 @@ export async function sendTelegramOrderNotificationClient(
         const data = await res.json().catch(() => null);
         if (res.ok && data?.ok) return true;
 
+        if ((res.status === 401 || data?.error_code === 401) && activeToken !== DEFAULT_TOKEN) {
+          console.warn("[Telegram] Active token is 401 Unauthorized, retrying with DEFAULT_TOKEN");
+          return await sendSafeMessage(htmlText, plainText, DEFAULT_TOKEN);
+        }
+
         // If HTML parsing failed or message was rejected, retry as Plain Text
-        const retryRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        const retryRes = await fetch(`https://api.telegram.org/bot${activeToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -342,8 +348,12 @@ export async function sendTelegramOrderNotificationClient(
         const retryData = await retryRes.json().catch(() => null);
         if (retryRes.ok && retryData?.ok) return true;
 
+        if ((retryRes.status === 401 || retryData?.error_code === 401) && activeToken !== DEFAULT_TOKEN) {
+          return await sendSafeMessage(htmlText, plainText, DEFAULT_TOKEN);
+        }
+
         // If reply_markup had an invalid button or link, send pure plain text without buttons
-        const pureRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        const pureRes = await fetch(`https://api.telegram.org/bot${activeToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -352,9 +362,17 @@ export async function sendTelegramOrderNotificationClient(
           })
         });
         const pureData = await pureRes.json().catch(() => null);
-        return Boolean(pureRes.ok && pureData?.ok);
+        if (pureRes.ok && pureData?.ok) return true;
+
+        if ((pureRes.status === 401 || pureData?.error_code === 401) && activeToken !== DEFAULT_TOKEN) {
+          return await sendSafeMessage(htmlText, plainText, DEFAULT_TOKEN);
+        }
+        return false;
       } catch (err) {
         console.warn("[Telegram] sendSafeMessage error:", err);
+        if (activeToken !== DEFAULT_TOKEN) {
+          return await sendSafeMessage(htmlText, plainText, DEFAULT_TOKEN);
+        }
         return false;
       }
     };

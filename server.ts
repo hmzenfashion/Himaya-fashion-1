@@ -653,7 +653,10 @@ async function sendTelegramOrderNotification(order: Order, customSettings?: Stor
     const settings = customSettings || data.settings || defaultSettings;
     const fallbackToken = Buffer.from("OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==", "base64").toString("utf-8");
     const rawToken = settings.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || process.env.telegrambot_token || fallbackToken;
-    const botToken = (rawToken || "").replace(/\s+/g, '').trim();
+    let botToken = (rawToken || "").replace(/\s+/g, '').trim();
+    if (botToken.startsWith('9051474160:') || botToken.startsWith('8964946844') || botToken.length < 20) {
+      botToken = fallbackToken;
+    }
     const chatId = (settings.telegramChatId || process.env.TELEGRAM_CHAT_ID || process.env.SMS_ID || process.env.telegramchat_id || "6333005937").trim();
 
     if (!botToken || !chatId) {
@@ -1052,7 +1055,10 @@ app.post("/api/telegram/test", async (req, res) => {
     const data = getStoreData();
     const fallbackToken = Buffer.from("OTA1MTQ3NDE2MDpBQUVDNlRJbWZiRzh2alpVYlllUEV1S1JXSUFiNkl5VmFoSQ==", "base64").toString("utf-8");
     const rawToken = botToken || data.settings?.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || process.env.HTTP_API_KEY || process.env.telegrambot_token || fallbackToken;
-    const token = (rawToken || "").replace(/\s+/g, '').trim();
+    let token = (rawToken || "").replace(/\s+/g, '').trim();
+    if (token.startsWith('9051474160:') || token.startsWith('8964946844') || token.length < 20) {
+      token = fallbackToken;
+    }
     const chat = (chatId || data.settings?.telegramChatId || process.env.TELEGRAM_CHAT_ID || process.env.SMS_ID || process.env.telegramchat_id || "6333005937").trim();
 
     if (!token || !chat) {

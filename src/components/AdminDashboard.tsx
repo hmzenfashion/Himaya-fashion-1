@@ -682,7 +682,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     appDownloadNotes: storeSettings?.appDownloadNotes || 'Official Himaya Fashion Android App. Instant shopping, push order updates & exclusive member offers.',
     appButtonText: storeSettings?.appButtonText || 'Download apps',
     isAppDownloadEnabled: storeSettings?.isAppDownloadEnabled ?? true,
-    telegramBotToken: (storeSettings?.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844')) ? storeSettings.telegramBotToken : DEFAULT_FALLBACK_BOT_TOKEN,
+    telegramBotToken: (storeSettings?.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844') && !storeSettings.telegramBotToken.startsWith('9051474160:')) ? storeSettings.telegramBotToken : DEFAULT_FALLBACK_BOT_TOKEN,
     telegramChatId: storeSettings?.telegramChatId || '6333005937',
     isTelegramNotificationsEnabled: storeSettings?.isTelegramNotificationsEnabled ?? true,
     popularSectionBadge: storeSettings?.popularSectionBadge || 'পপুলার কালেকশন · POPULAR PICKS',
@@ -792,7 +792,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         appDownloadNotes: storeSettings.appDownloadNotes || prev.appDownloadNotes || '',
         appButtonText: storeSettings.appButtonText || prev.appButtonText || 'Download apps',
         isAppDownloadEnabled: storeSettings.isAppDownloadEnabled ?? prev.isAppDownloadEnabled ?? true,
-        telegramBotToken: (storeSettings.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844')) ? storeSettings.telegramBotToken : (prev.telegramBotToken && !prev.telegramBotToken.startsWith('8964946844') ? prev.telegramBotToken : DEFAULT_FALLBACK_BOT_TOKEN),
+        telegramBotToken: (storeSettings.telegramBotToken && !storeSettings.telegramBotToken.startsWith('8964946844') && !storeSettings.telegramBotToken.startsWith('9051474160:')) ? storeSettings.telegramBotToken : (prev.telegramBotToken && !prev.telegramBotToken.startsWith('8964946844') && !prev.telegramBotToken.startsWith('9051474160:') ? prev.telegramBotToken : DEFAULT_FALLBACK_BOT_TOKEN),
         telegramChatId: storeSettings.telegramChatId || prev.telegramChatId || '6333005937',
         isTelegramNotificationsEnabled: storeSettings.isTelegramNotificationsEnabled !== undefined ? storeSettings.isTelegramNotificationsEnabled : (prev.isTelegramNotificationsEnabled ?? true)
       }));
@@ -2727,16 +2727,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span className="truncate">Netlify Ready (.zip)</span>
                 </button>
-                <div className="flex items-center justify-between px-2 pt-1 text-[11px] text-slate-500">
-                  <button
-                    onClick={handleReload}
-                    disabled={isRefreshing}
-                    className="flex items-center gap-1.5 hover:text-slate-300 transition-colors cursor-pointer disabled:opacity-60"
-                    title="Sync and reload latest data"
-                  >
-                    <RefreshCw className={`w-3 h-3 text-emerald-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-                    <span>{isRefreshing ? 'Syncing...' : 'Sync'}</span>
-                  </button>
+                <div className="flex items-center justify-end px-2 pt-1 text-[11px] text-slate-500">
                   <button
                     onClick={() => setIsAuthenticated(false)}
                     className="flex items-center gap-1.5 text-rose-400 hover:text-rose-300 transition-colors cursor-pointer"
